@@ -134,6 +134,10 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # psedo surface attributes. See Eq. 9 in Unbiased Depth paper
     surf_depth = torch.nan_to_num(allmap[5:6], 0, 0)
     
+    # Improvement 2.2 & 2.3: Extract depth variance and alpha concentration
+    depth_variance = torch.nan_to_num(allmap[7:8], 0, 0)
+    alpha_concentration = torch.nan_to_num(allmap[8:9], 0, 0)
+    
     # assume the depth points form the 'surface' and generate psudo surface normal for regularizations.
     surf_normal = depth_to_normal(viewpoint_camera, surf_depth)
     surf_normal = surf_normal.permute(2,0,1)
@@ -147,6 +151,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             'rend_dist': render_dist,
             'surf_depth': surf_depth,
             'surf_normal': surf_normal,
+            'depth_variance': depth_variance,  # Improvement 2.2
+            'alpha_concentration': alpha_concentration,  # Improvement 2.3
     })
 
     return rets

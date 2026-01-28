@@ -86,6 +86,8 @@ class OptimizationParams(ParamGroup):
         self.lambda_dist = 0.0
         self.lambda_normal = 0.05
         self.lambda_converge = 7.0
+        self.lambda_alpha_concentration = 0.3  # Improvement 2.3: Alpha concentration loss weight
+        self.lambda_alpha_completeness = 0.1  # Improvement 2.3: Alpha completeness loss weight
         self.opacity_cull = 0.05
 
         self.densification_interval = 100

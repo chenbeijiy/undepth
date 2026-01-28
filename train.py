@@ -63,6 +63,8 @@ def training(dataset: ModelParams,
     ema_dist_for_log = 0.0
     ema_normal_for_log = 0.0
     ema_converge_for_log = 0.0
+    ema_alpha_concentration_for_log = 0.0
+    ema_alpha_completeness_for_log = 0.0
 
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
@@ -111,8 +113,23 @@ def training(dataset: ModelParams,
         normal_loss = lambda_normal * (normal_error).mean()
         dist_loss = lambda_dist * (rend_dist).mean()
 
+        # Improvement 2.3: Alpha concentration and completeness losses
+        lambda_alpha_concentration = opt.lambda_alpha_concentration if iteration > 8000 else 0.0
+        lambda_alpha_completeness = opt.lambda_alpha_completeness if iteration > 8000 else 0.0
+        
+        # Alpha concentration loss: variance of depths with significant alpha
+        alpha_concentration = render_pkg.get('alpha_concentration', torch.tensor(0.0, device="cuda"))
+        alpha_concentration_loss = lambda_alpha_concentration * alpha_concentration.mean()
+        
+        # Alpha completeness loss: enforce alpha saturation in valid surface regions
+        rend_alpha = render_pkg['rend_alpha']
+        # Use depth variance as indicator of valid surface (low variance = valid surface)
+        depth_variance = render_pkg.get('depth_variance', torch.tensor(1.0, device="cuda"))
+        valid_surface_mask = (depth_variance < 0.1).float()  # Low variance indicates valid surface
+        alpha_completeness_loss = lambda_alpha_completeness * ((1.0 - rend_alpha) ** 2 * valid_surface_mask).mean()
+
         # loss
-        total_loss = loss + dist_loss + normal_loss + converge_loss
+        total_loss = loss + dist_loss + normal_loss + converge_loss + alpha_concentration_loss + alpha_completeness_loss
         
         total_loss.backward()
 
@@ -124,6 +141,8 @@ def training(dataset: ModelParams,
             # ema_dist_for_log = 0.4 * dist_loss.item() + 0.6 * ema_dist_for_log
             ema_normal_for_log = 0.4 * normal_loss.item() + 0.6 * ema_normal_for_log
             ema_converge_for_log = 0.4 * converge_loss.item() + 0.6 * ema_converge_for_log
+            ema_alpha_concentration_for_log = 0.4 * alpha_concentration_loss.item() + 0.6 * ema_alpha_concentration_for_log
+            ema_alpha_completeness_for_log = 0.4 * alpha_completeness_loss.item() + 0.6 * ema_alpha_completeness_for_log
 
             if iteration % 10 == 0:
                 loss_dict = {
@@ -131,6 +150,8 @@ def training(dataset: ModelParams,
                     # "distort": f"{ema_dist_for_log:.{5}f}",
                     "normal": f"{ema_normal_for_log:.{5}f}",
                     "converge": f"{ema_converge_for_log:.{5}f}",
+                    "alpha_conc": f"{ema_alpha_concentration_for_log:.{5}f}",
+                    "alpha_comp": f"{ema_alpha_completeness_for_log:.{5}f}",
                     "Points": f"{len(gaussians.get_xyz)}"  
                 }
                 progress_bar.set_postfix(loss_dict)
