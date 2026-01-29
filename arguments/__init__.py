@@ -86,7 +86,9 @@ class OptimizationParams(ParamGroup):
         self.lambda_dist = 0.0
         self.lambda_normal = 0.05
         self.lambda_converge = 7.0
-        self.lambda_converge_ray = 2.0  # Improvement 2.1: Global depth convergence loss weight
+        # DISABLED: Improvement 2.1
+        # self.lambda_converge_ray = 2.0
+        self.lambda_multiview_depth = 0.5  # Improvement 2.4: Multi-view depth consistency loss weight
         # DISABLED: Improvements 2.2 & 2.3
         # self.lambda_alpha_concentration = 0.3
         # self.lambda_alpha_completeness = 0.1

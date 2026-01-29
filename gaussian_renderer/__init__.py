@@ -134,8 +134,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # psedo surface attributes. See Eq. 9 in Unbiased Depth paper
     surf_depth = torch.nan_to_num(allmap[5:6], 0, 0)
     
-    # Improvement 2.1: Extract global depth convergence loss
-    converge_ray = torch.nan_to_num(allmap[7:8], 0, 0)  # Global convergence loss
+    # DISABLED: Improvement 2.1: Extract global depth convergence loss
+    # converge_ray = torch.nan_to_num(allmap[7:8], 0, 0)
     
     # DISABLED: Improvements 2.2 & 2.3
     # depth_variance = torch.nan_to_num(allmap[7:8], 0, 0)
@@ -154,7 +154,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             'rend_dist': render_dist,
             'surf_depth': surf_depth,
             'surf_normal': surf_normal,
-            'converge_ray': converge_ray,  # Improvement 2.1: Global depth convergence loss
+            # DISABLED: Improvement 2.1
+            # 'converge_ray': converge_ray,
             # DISABLED: Improvements 2.2 & 2.3
             # 'depth_variance': depth_variance,
             # 'alpha_concentration': alpha_concentration,

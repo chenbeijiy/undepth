@@ -329,12 +329,12 @@ renderCUDA(
     float last_G = 0;
     float cum_opacity = 0;
 	
-	// Improvement 2.1: Global depth convergence loss
+	// DISABLED: Improvement 2.1: Global depth convergence loss
 	// Accumulate weighted depth and weights for computing mean depth
-	float weighted_depth_sum = 0.0f;
-	float weight_sum = 0.0f;
-	float converge_ray = 0.0f;  // Global convergence loss for the ray
-	float ray_mean_depth = 0.0f;  // Will be computed after first pass
+	// float weighted_depth_sum = 0.0f;
+	// float weight_sum = 0.0f;
+	// float converge_ray = 0.0f;  // Global convergence loss for the ray
+	// float ray_mean_depth = 0.0f;  // Will be computed after first pass
 	
 	// DISABLED: For adaptive threshold and alpha concentration (Improvements 2.2 & 2.3)
 	// float depth_variance = 0.0f;
@@ -446,25 +446,25 @@ renderCUDA(
             }
             cum_opacity += (alpha + 0.1 * G);
             
-            // Improvement 2.1: Global depth convergence loss
+            // DISABLED: Improvement 2.1: Global depth convergence loss
             // Accumulate weighted depth and weights, and compute incremental loss
             // Update weighted mean depth incrementally
-            float old_weight_sum = weight_sum;
-            weighted_depth_sum += depth * w;
-            weight_sum += w;
-            
-            if (weight_sum > 1e-8f) {
-                // Update mean depth
-                float old_mean = (old_weight_sum > 1e-8f) ? (weighted_depth_sum - depth * w) / old_weight_sum : 0.0f;
-                ray_mean_depth = weighted_depth_sum / weight_sum;
-                
-                // Compute incremental contribution to convergence loss
-                // For current Gaussian: w * (depth - mean)^2
-                // But mean changes as we add more Gaussians, so we need to adjust previous contributions
-                // For simplicity, we compute: w * (depth - current_mean)^2
-                float depth_diff = depth - ray_mean_depth;
-                converge_ray += w * depth_diff * depth_diff;
-            }
+            // float old_weight_sum = weight_sum;
+            // weighted_depth_sum += depth * w;
+            // weight_sum += w;
+            // 
+            // if (weight_sum > 1e-8f) {
+            //     // Update mean depth
+            //     float old_mean = (old_weight_sum > 1e-8f) ? (weighted_depth_sum - depth * w) / old_weight_sum : 0.0f;
+            //     ray_mean_depth = weighted_depth_sum / weight_sum;
+            //     
+            //     // Compute incremental contribution to convergence loss
+            //     // For current Gaussian: w * (depth - mean)^2
+            //     // But mean changes as we add more Gaussians, so we need to adjust previous contributions
+            //     // For simplicity, we compute: w * (depth - current_mean)^2
+            //     float depth_diff = depth - ray_mean_depth;
+            //     converge_ray += w * depth_diff * depth_diff;
+            // }
             
             // DISABLED: Improvement 2.2: Adaptive threshold based on convergence degree
             // depth_weight_sum += w;
@@ -501,13 +501,10 @@ renderCUDA(
                         0 : min(G, last_G) * (depth - last_depth) * (depth - last_depth);
 				}
                 last_G = G;
-				last_converge = contributor;
+                last_converge = contributor;
 			}
 			
-			// Improvement 2.1: Global depth convergence loss
-			// Accumulate weighted depth and weights (will compute mean after loop)
-			
-			// Improvement 2.1: Global depth convergence loss
+			// DISABLED: Improvement 2.1: Global depth convergence loss
 			// Accumulate weighted depth and weights (will compute mean after loop)
 
  			T = test_T;
@@ -539,16 +536,16 @@ renderCUDA(
 		out_others[pix_id + MIDDEPTH_OFFSET * H * W] = median_depth;
 		out_others[pix_id + DISTORTION_OFFSET * H * W] = distortion;
 		
-		// Improvement 2.1: Finalize global convergence loss
+		// DISABLED: Improvement 2.1: Finalize global convergence loss
 		// Compute final weighted mean depth
-		if (weight_sum > 1e-8f) {
-			ray_mean_depth = weighted_depth_sum / weight_sum;
-		}
+		// if (weight_sum > 1e-8f) {
+		// 	ray_mean_depth = weighted_depth_sum / weight_sum;
+		// }
 		// Output global convergence loss
 		// Note: This is an approximation computed incrementally during traversal
 		// For exact computation, a second pass would be needed, but this approximation
 		// should work well in practice as it captures the convergence tendency
-		out_others[pix_id + DEPTH_VARIANCE_OFFSET * H * W] = converge_ray;  // Reuse offset for global convergence
+		// out_others[pix_id + DEPTH_VARIANCE_OFFSET * H * W] = converge_ray;  // Reuse offset for global convergence
 		
 		// DISABLED: Output for improvements 2.2 & 2.3
 		// out_others[pix_id + DEPTH_VARIANCE_OFFSET * H * W] = depth_variance;
