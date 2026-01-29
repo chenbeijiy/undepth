@@ -49,15 +49,12 @@ def project_depth_to_view(depth_map, source_view, target_view):
     points_ndc = points_ndc_homogeneous[:, :3] / (points_ndc_homogeneous[:, 3:4] + 1e-8)  # (H*W, 3)
     
     # Convert NDC to pixel coordinates
-    ndc2pix = torch.tensor([
-        [target_W / 2, 0, 0, (target_W - 1) / 2],
-        [0, target_H / 2, 0, (target_H - 1) / 2],
-        [0, 0, 1, 0],
-        [0, 0, 0, 1]
-    ], dtype=torch.float32, device=device).T
-    
-    points_pix_homogeneous = points_ndc @ ndc2pix.T  # (H*W, 4)
-    points_pix = points_pix_homogeneous[:, :2] / (points_pix_homogeneous[:, 2:3] + 1e-8)  # (H*W, 2)
+    # NDC coordinates are in [-1, 1], convert to pixel coordinates [0, W-1] and [0, H-1]
+    # x_pix = (x_ndc + 1) * (W - 1) / 2
+    # y_pix = (y_ndc + 1) * (H - 1) / 2
+    points_pix = torch.zeros(points_ndc.shape[0], 2, device=device)
+    points_pix[:, 0] = (points_ndc[:, 0] + 1.0) * (target_W - 1) / 2.0
+    points_pix[:, 1] = (points_ndc[:, 1] + 1.0) * (target_H - 1) / 2.0
     
     # Check if points are within image bounds
     valid_x = (points_pix[:, 0] >= 0) & (points_pix[:, 0] < target_W)
