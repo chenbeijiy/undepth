@@ -82,7 +82,8 @@ RasterizeGaussiansCUDA(
   auto float_opts = means3D.options().dtype(torch::kFloat32);
 
   torch::Tensor out_color = torch::full({NUM_CHANNELS, H, W}, 0.0, float_opts);
-  torch::Tensor out_others = torch::full({3+3+1, H, W}, 0.0, float_opts);
+  // out_others channels: 0=depth, 1=alpha, 2-4=normal(3), 5=median_depth, 6=distortion, 7=depth_variance, 8=alpha_concentration
+  torch::Tensor out_others = torch::full({9, H, W}, 0.0, float_opts);  // Increased from 7 to 9 for improvements 2.2 & 2.3
 
   torch::Tensor out_converge = torch::full({1, H, W}, 0.0, float_opts);
 
