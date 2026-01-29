@@ -72,7 +72,7 @@ if __name__ == '__main__':
             os.system(cmd)
 
     for scene in dtu_scenes:
-        output_path = os.path.join(".", "eval", "dtu", scene)
+        output_path = "../output/unbaised/eval/dtu/" + scene
         # ------------------------ Evaluate ------------------------
         if not skip_metrics:
             scan_id = scene[4:]
