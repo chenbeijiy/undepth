@@ -329,14 +329,21 @@ renderCUDA(
     float last_G = 0;
     float cum_opacity = 0;
 	
-	// For adaptive threshold and alpha concentration (Improvements 2.2 & 2.3)
-	float depth_variance = 0.0f;
-	float depth_mean = 0.0f;
-	float depth_weight_sum = 0.0f;
-	float alpha_concentration = 0.0f;  // variance of depths with significant alpha
-	float alpha_concentration_mean = 0.0f;
-	float alpha_concentration_weight_sum = 0.0f;
-	const float alpha_threshold = 0.1f;  // threshold for significant alpha
+	// Improvement 2.1: Global depth convergence loss
+	// Accumulate weighted depth and weights for computing mean depth
+	float weighted_depth_sum = 0.0f;
+	float weight_sum = 0.0f;
+	float converge_ray = 0.0f;  // Global convergence loss for the ray
+	float ray_mean_depth = 0.0f;  // Will be computed after first pass
+	
+	// DISABLED: For adaptive threshold and alpha concentration (Improvements 2.2 & 2.3)
+	// float depth_variance = 0.0f;
+	// float depth_mean = 0.0f;
+	// float depth_weight_sum = 0.0f;
+	// float alpha_concentration = 0.0f;
+	// float alpha_concentration_mean = 0.0f;
+	// float alpha_concentration_weight_sum = 0.0f;
+	// const float alpha_threshold = 0.1f;
 #endif
 
 	// Iterate over batches until all done or range is complete
@@ -431,47 +438,53 @@ renderCUDA(
             // }
 
             // Cumulated opacity. Eq. (9) from paper Unbiased 2DGS.
-            // Improvement 2.2: Adaptive threshold based on convergence degree
-            // Calculate depth variance for adaptive threshold
-            depth_weight_sum += w;
-            if (depth_weight_sum > 1e-8f) {
-                float old_mean = depth_mean;
-                depth_mean = (depth_mean * (depth_weight_sum - w) + depth * w) / depth_weight_sum;
-                // Incremental variance calculation: Var = E[X²] - E[X]²
-                depth_variance = depth_variance * ((depth_weight_sum - w) / depth_weight_sum) + 
-                                (depth - old_mean) * (depth - depth_mean) * (w / depth_weight_sum);
-            }
-            
-            // Alpha concentration: track variance of depths with significant alpha
-            if (alpha > alpha_threshold) {
-                alpha_concentration_weight_sum += w;
-                if (alpha_concentration_weight_sum > 1e-8f) {
-                    float old_alpha_mean = alpha_concentration_mean;
-                    alpha_concentration_mean = (alpha_concentration_mean * (alpha_concentration_weight_sum - w) + depth * w) / alpha_concentration_weight_sum;
-                    alpha_concentration = alpha_concentration * ((alpha_concentration_weight_sum - w) / alpha_concentration_weight_sum) + 
-                                         (depth - old_alpha_mean) * (depth - alpha_concentration_mean) * (w / alpha_concentration_weight_sum);
-                }
-            }
-            
-            // Adaptive threshold calculation
-            // threshold = 0.5 + 0.2 * sigmoid(convergence_degree)
-            // convergence_degree based on depth variance, alpha saturation, and convergence loss
-            float alpha_saturation = 1.0f - T;  // cumulative alpha
-            float var_factor = 1.0f / (1.0f + depth_variance * 100.0f);  // normalize variance
-            float alpha_factor = alpha_saturation;
-            float convergence_factor = 1.0f / (1.0f + Converge * 10.0f);  // normalize convergence loss
-            
-            // Sigmoid-like function for convergence degree
-            float convergence_degree = (alpha_factor + var_factor + convergence_factor) / 3.0f;
-            float adaptive_threshold = 0.5f + 0.2f * convergence_degree;  // range: [0.5, 0.7]
-            
-            // Use adaptive threshold instead of fixed 0.6
-            if (cum_opacity < adaptive_threshold) {
+            // DISABLED Improvement 2.2: Use fixed threshold 0.6 instead of adaptive threshold
+            if (cum_opacity < 0.6f) {
                 // Make the depth map smoother
                 median_depth = last_depth > 0 ? (last_depth + depth) * 0.5 : depth;
                 median_contributor = contributor;
             }
-            cum_opacity += (alpha + 0.1 * G); 
+            cum_opacity += (alpha + 0.1 * G);
+            
+            // Improvement 2.1: Global depth convergence loss
+            // Accumulate weighted depth and weights, and compute incremental loss
+            // Update weighted mean depth incrementally
+            float old_weight_sum = weight_sum;
+            weighted_depth_sum += depth * w;
+            weight_sum += w;
+            
+            if (weight_sum > 1e-8f) {
+                // Update mean depth
+                float old_mean = (old_weight_sum > 1e-8f) ? (weighted_depth_sum - depth * w) / old_weight_sum : 0.0f;
+                ray_mean_depth = weighted_depth_sum / weight_sum;
+                
+                // Compute incremental contribution to convergence loss
+                // For current Gaussian: w * (depth - mean)^2
+                // But mean changes as we add more Gaussians, so we need to adjust previous contributions
+                // For simplicity, we compute: w * (depth - current_mean)^2
+                float depth_diff = depth - ray_mean_depth;
+                converge_ray += w * depth_diff * depth_diff;
+            }
+            
+            // DISABLED: Improvement 2.2: Adaptive threshold based on convergence degree
+            // depth_weight_sum += w;
+            // if (depth_weight_sum > 1e-8f) {
+            //     float old_mean = depth_mean;
+            //     depth_mean = (depth_mean * (depth_weight_sum - w) + depth * w) / depth_weight_sum;
+            //     depth_variance = depth_variance * ((depth_weight_sum - w) / depth_weight_sum) + 
+            //                     (depth - old_mean) * (depth - depth_mean) * (w / depth_weight_sum);
+            // }
+            
+            // DISABLED: Improvement 2.3: Alpha concentration
+            // if (alpha > alpha_threshold) {
+            //     alpha_concentration_weight_sum += w;
+            //     if (alpha_concentration_weight_sum > 1e-8f) {
+            //         float old_alpha_mean = alpha_concentration_mean;
+            //         alpha_concentration_mean = (alpha_concentration_mean * (alpha_concentration_weight_sum - w) + depth * w) / alpha_concentration_weight_sum;
+            //         alpha_concentration = alpha_concentration * ((alpha_concentration_weight_sum - w) / alpha_concentration_weight_sum) + 
+            //                              (depth - old_alpha_mean) * (depth - alpha_concentration_mean) * (w / alpha_concentration_weight_sum);
+            //     }
+            // } 
 
 			// Render normal map
 			for (int ch=0; ch<3; ch++) N[ch] += normal[ch] * w;
@@ -481,7 +494,7 @@ renderCUDA(
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * w;
 
-			// Converge Loss - Original adjacent constraint (kept for backward compatibility)
+			// Converge Loss - Original adjacent constraint
 			if((T > 0.09f)) {
 				if(last_converge > 0) {
                     Converge += abs(depth - last_depth) > ConvergeThreshold ?
@@ -490,6 +503,9 @@ renderCUDA(
                 last_G = G;
 				last_converge = contributor;
 			}
+			
+			// Improvement 2.1: Global depth convergence loss
+			// Accumulate weighted depth and weights (will compute mean after loop)
 			
 			// Improvement 2.1: Global depth convergence loss
 			// Accumulate weighted depth and weights (will compute mean after loop)
@@ -523,9 +539,20 @@ renderCUDA(
 		out_others[pix_id + MIDDEPTH_OFFSET * H * W] = median_depth;
 		out_others[pix_id + DISTORTION_OFFSET * H * W] = distortion;
 		
-		// Output for improvements 2.2 & 2.3
-		out_others[pix_id + DEPTH_VARIANCE_OFFSET * H * W] = depth_variance;
-		out_others[pix_id + ALPHA_CONCENTRATION_OFFSET * H * W] = alpha_concentration;
+		// Improvement 2.1: Finalize global convergence loss
+		// Compute final weighted mean depth
+		if (weight_sum > 1e-8f) {
+			ray_mean_depth = weighted_depth_sum / weight_sum;
+		}
+		// Output global convergence loss
+		// Note: This is an approximation computed incrementally during traversal
+		// For exact computation, a second pass would be needed, but this approximation
+		// should work well in practice as it captures the convergence tendency
+		out_others[pix_id + DEPTH_VARIANCE_OFFSET * H * W] = converge_ray;  // Reuse offset for global convergence
+		
+		// DISABLED: Output for improvements 2.2 & 2.3
+		// out_others[pix_id + DEPTH_VARIANCE_OFFSET * H * W] = depth_variance;
+		// out_others[pix_id + ALPHA_CONCENTRATION_OFFSET * H * W] = alpha_concentration;
 
 		out_converge[pix_id] = Converge;  // Original adjacent constraint
 		// out_others[pix_id + MEDIAN_WEIGHT_OFFSET * H * W] = median_weight;
