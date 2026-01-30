@@ -107,7 +107,7 @@ def training(dataset: ModelParams,
         lambda_normal = opt.lambda_normal if iteration > 7000 else 0.0
         lambda_dist = opt.lambda_dist if iteration > 3000 else 0.0
 
-        # Improvement 3.1: Enhanced depth convergence loss combination
+        # Improvement 3.3: Multi-loss joint optimization
         # L_converge_enhanced = λ1 * L_converge_local + λ2 * L_converge_global + λ3 * L_cross
         
         # Local convergence loss (original adjacent constraint)
@@ -125,10 +125,7 @@ def training(dataset: ModelParams,
         converge_cross_loss = lambda_converge_cross * depth_alpha_cross.mean()
         
         # Combined enhanced convergence loss
-        converge_loss = converge_local_loss + converge_global_loss + converge_cross_loss
-        
-        # Keep for backward compatibility
-        converge_ray_loss = converge_global_loss
+        converge_enhanced = converge_local_loss + converge_global_loss + converge_cross_loss
 
         rend_dist   = render_pkg["rend_dist"]  
         rend_normal = render_pkg['rend_normal']
@@ -137,42 +134,37 @@ def training(dataset: ModelParams,
         normal_loss = lambda_normal * (normal_error).mean()
         dist_loss = lambda_dist * (rend_dist).mean()
 
-        # DISABLED: Improvement 2.3: Alpha concentration and completeness losses
-        # lambda_alpha_concentration = opt.lambda_alpha_concentration if iteration > 8000 else 0.0
-        # lambda_alpha_completeness = opt.lambda_alpha_completeness if iteration > 8000 else 0.0
-        # alpha_concentration = render_pkg.get('alpha_concentration', torch.tensor(0.0, device="cuda"))
-        # alpha_concentration_loss = lambda_alpha_concentration * alpha_concentration.mean()
-        # rend_alpha = render_pkg['rend_alpha']
-        # depth_variance = render_pkg.get('depth_variance', torch.tensor(1.0, device="cuda"))
-        # valid_surface_mask = (depth_variance < 0.1).float()
-        # alpha_completeness_loss = lambda_alpha_completeness * ((1.0 - rend_alpha) ** 2 * valid_surface_mask).mean()
-        alpha_concentration_loss = torch.tensor(0.0, device="cuda")
-        alpha_completeness_loss = torch.tensor(0.0, device="cuda")
+        # Improvement 3.3: Alpha completeness loss
+        lambda_alpha_completeness = opt.lambda_alpha_completeness if iteration > 8000 else 0.0
+        rend_alpha = render_pkg['rend_alpha']
+        # Use converge_ray as a proxy for depth variance (low converge_ray means low variance, i.e., valid surface)
+        # converge_ray represents depth variance, so low values indicate good convergence (valid surface)
+        valid_surface_mask = (converge_ray < 0.1).float()
+        alpha_completeness_loss = lambda_alpha_completeness * ((1.0 - rend_alpha) ** 2 * valid_surface_mask).mean()
 
-        # DISABLED: Improvement 2.4: Multi-view depth consistency loss
-        # lambda_multiview_depth = opt.lambda_multiview_depth if iteration > 12000 else 0.0
-        # multiview_depth_loss = torch.tensor(0.0, device="cuda")
-        # 
-        # if lambda_multiview_depth > 0 and len(viewpoint_stack) > 0:
-        #     # Sample another random view for multi-view consistency
-        #     other_view_idx = randint(0, len(viewpoint_stack) - 1)
-        #     other_viewpoint_cam = viewpoint_stack[other_view_idx]
-        #     
-        #     # Render the other view (need gradients for loss computation)
-        #     other_render_pkg = render(other_viewpoint_cam, gaussians, pipe, background)
-        #     other_surf_depth = other_render_pkg['surf_depth']
-        #     
-        #     # Compute multi-view depth consistency loss
-        #     from utils.multiview_utils import multi_view_depth_consistency_loss
-        #     surf_depth = render_pkg['surf_depth']
-        #     multiview_depth_loss = lambda_multiview_depth * multi_view_depth_consistency_loss(
-        #         surf_depth, viewpoint_cam, other_surf_depth, other_viewpoint_cam
-        #     )
+        # Improvement 3.3: Multi-view depth consistency loss
+        lambda_multiview_depth = opt.lambda_multiview_depth if iteration > 12000 else 0.0
         multiview_depth_loss = torch.tensor(0.0, device="cuda")
+        
+        if lambda_multiview_depth > 0 and len(viewpoint_stack) > 0:
+            # Sample another random view for multi-view consistency
+            other_view_idx = randint(0, len(viewpoint_stack) - 1)
+            other_viewpoint_cam = viewpoint_stack[other_view_idx]
+            
+            # Render the other view (need gradients for loss computation)
+            other_render_pkg = render(other_viewpoint_cam, gaussians, pipe, background)
+            other_surf_depth = other_render_pkg['surf_depth']
+            
+            # Compute multi-view depth consistency loss
+            from utils.multiview_utils import multi_view_depth_consistency_loss
+            surf_depth = render_pkg['surf_depth']
+            multiview_depth_loss = lambda_multiview_depth * multi_view_depth_consistency_loss(
+                surf_depth, viewpoint_cam, other_surf_depth, other_viewpoint_cam
+            )
 
-        # loss
-        # Improvement 3.1: converge_loss already includes local + global + cross terms
-        total_loss = loss + dist_loss + normal_loss + converge_loss + multiview_depth_loss
+        # Improvement 3.3: Multi-loss joint optimization
+        # L_total = L_rgb + λ1 * L_converge_enhanced + λ2 * L_alpha_completeness + λ3 * L_multi_view_depth
+        total_loss = loss + dist_loss + normal_loss + converge_enhanced + alpha_completeness_loss + multiview_depth_loss
         
         total_loss.backward()
 
@@ -183,19 +175,13 @@ def training(dataset: ModelParams,
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
             # ema_dist_for_log = 0.4 * dist_loss.item() + 0.6 * ema_dist_for_log
             ema_normal_for_log = 0.4 * normal_loss.item() + 0.6 * ema_normal_for_log
-            ema_converge_for_log = 0.4 * converge_loss.item() + 0.6 * ema_converge_for_log
-            # DISABLED: Improvement 2.4
-            # ema_multiview_depth_for_log = 0.4 * multiview_depth_loss.item() + 0.6 * ema_multiview_depth_for_log
-            # DISABLED: Improvement 2.1
-            # ema_converge_ray_for_log = 0.4 * converge_ray_loss.item() + 0.6 * ema_converge_ray_for_log
-            # Improvement 3.1: Enhanced depth convergence loss combination
+            ema_converge_for_log = 0.4 * converge_enhanced.item() + 0.6 * ema_converge_for_log
+            # Improvement 3.3: Multi-loss joint optimization
             ema_converge_local_for_log = 0.4 * converge_local_loss.item() + 0.6 * ema_converge_local_for_log
             ema_converge_global_for_log = 0.4 * converge_global_loss.item() + 0.6 * ema_converge_global_for_log
             ema_converge_cross_for_log = 0.4 * converge_cross_loss.item() + 0.6 * ema_converge_cross_for_log
-            
-            # DISABLED: Improvements 2.2 & 2.3
-            # ema_alpha_concentration_for_log = 0.4 * alpha_concentration_loss.item() + 0.6 * ema_alpha_concentration_for_log
-            # ema_alpha_completeness_for_log = 0.4 * alpha_completeness_loss.item() + 0.6 * ema_alpha_completeness_for_log
+            ema_multiview_depth_for_log = 0.4 * multiview_depth_loss.item() + 0.6 * ema_multiview_depth_for_log
+            ema_alpha_completeness_for_log = 0.4 * alpha_completeness_loss.item() + 0.6 * ema_alpha_completeness_for_log
 
             if iteration % 10 == 0:
                 loss_dict = {
@@ -203,14 +189,11 @@ def training(dataset: ModelParams,
                     # "distort": f"{ema_dist_for_log:.{5}f}",
                     "normal": f"{ema_normal_for_log:.{5}f}",
                     "converge": f"{ema_converge_for_log:.{5}f}",
-                    "conv_loc": f"{ema_converge_local_for_log:.{5}f}",  # Improvement 3.1: Local
-                    "conv_glob": f"{ema_converge_global_for_log:.{5}f}",  # Improvement 3.1: Global
-                    "conv_cross": f"{ema_converge_cross_for_log:.{5}f}",  # Improvement 3.1: Cross
-                    # DISABLED: Improvement 2.4
-                    # "multiview": f"{ema_multiview_depth_for_log:.{5}f}",
-                    # DISABLED: Improvements 2.2 & 2.3
-                    # "alpha_conc": f"{ema_alpha_concentration_for_log:.{5}f}",
-                    # "alpha_comp": f"{ema_alpha_completeness_for_log:.{5}f}",
+                    "conv_loc": f"{ema_converge_local_for_log:.{5}f}",  # Improvement 3.3: Local
+                    "conv_glob": f"{ema_converge_global_for_log:.{5}f}",  # Improvement 3.3: Global
+                    "conv_cross": f"{ema_converge_cross_for_log:.{5}f}",  # Improvement 3.3: Cross
+                    "multiview": f"{ema_multiview_depth_for_log:.{5}f}",  # Improvement 3.3: Multi-view
+                    "alpha_comp": f"{ema_alpha_completeness_for_log:.{5}f}",  # Improvement 3.3: Alpha completeness
                     "Points": f"{len(gaussians.get_xyz)}"  
                 }
                 progress_bar.set_postfix(loss_dict)

@@ -329,8 +329,8 @@ renderCUDA(
     float last_G = 0;
     float cum_opacity = 0;
 	
-	// Improvement 3.1: Enhanced depth convergence loss combination
-	// Need both global convergence (2.1) and depth-alpha cross term (2.5)
+	// Improvement 3.3: Multi-loss joint optimization
+	// Need both global convergence (2.1) and depth-alpha cross term (2.5) for converge_enhanced
 	
 	// Improvement 2.1: Global depth convergence loss
 	// Accumulate weighted depth and weights for computing mean depth
@@ -489,8 +489,8 @@ renderCUDA(
             //     if (depth_variance < 0.0f) depth_variance = 0.0f;
             // }
             
-            // Improvement 3.1: Enhanced depth convergence loss combination
-            // Compute both global convergence (2.1) and depth-alpha cross term (2.5)
+            // Improvement 3.3: Multi-loss joint optimization
+            // Compute both global convergence (2.1) and depth-alpha cross term (2.5) for converge_enhanced
             
             // Improvement 2.1: Global depth convergence loss
             // Accumulate weighted depth and weights, and compute incremental loss
@@ -585,8 +585,8 @@ renderCUDA(
 		out_others[pix_id + MIDDEPTH_OFFSET * H * W] = median_depth;
 		out_others[pix_id + DISTORTION_OFFSET * H * W] = distortion;
 		
-		// Improvement 3.1: Enhanced depth convergence loss combination
-		// Output both global convergence (2.1) and depth-alpha cross term (2.5)
+		// Improvement 3.3: Multi-loss joint optimization
+		// Output both global convergence (2.1) and depth-alpha cross term (2.5) for converge_enhanced
 		
 		// Improvement 2.1: Finalize global convergence loss
 		// Compute final weighted mean depth (already computed incrementally)

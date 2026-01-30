@@ -85,7 +85,7 @@ class OptimizationParams(ParamGroup):
         self.lambda_dssim = 0.2
         self.lambda_dist = 0.0
         self.lambda_normal = 0.05
-        # Improvement 3.1: Enhanced depth convergence loss combination
+        # Improvement 3.3: Multi-loss joint optimization
         # L_converge_enhanced = λ1 * L_converge_local + λ2 * L_converge_global + λ3 * L_cross
         self.lambda_converge_local = 7.0  # Local convergence loss (original adjacent constraint)
         self.lambda_converge_global = 2.0  # Global convergence loss (Improvement 2.1)
@@ -94,11 +94,9 @@ class OptimizationParams(ParamGroup):
         # Keep for backward compatibility
         self.lambda_converge = self.lambda_converge_local
         
-        # DISABLED: Improvement 2.4
-        # self.lambda_multiview_depth = 0.5  # Multi-view depth consistency loss weight
-        # DISABLED: Improvements 2.2 & 2.3
-        # self.lambda_alpha_concentration = 0.3
-        # self.lambda_alpha_completeness = 0.1
+        # Improvement 3.3: Multi-loss joint optimization parameters
+        self.lambda_multiview_depth = 0.5  # Multi-view depth consistency loss weight
+        self.lambda_alpha_completeness = 0.1  # Alpha completeness loss weight
         self.opacity_cull = 0.05
         
         # DISABLED: Improvement 2.7: Adaptive densification based on depth variance
