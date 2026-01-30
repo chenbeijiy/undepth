@@ -134,18 +134,17 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # psedo surface attributes. See Eq. 9 in Unbiased Depth paper
     surf_depth = torch.nan_to_num(allmap[5:6], 0, 0)
     
-    # DISABLED: Improvement 2.1: Extract global depth convergence loss
-    # converge_ray = torch.nan_to_num(allmap[7:8], 0, 0)
+    # Improvement 3.1: Enhanced depth convergence loss combination
+    # Extract global convergence (2.1) and depth-alpha cross term (2.5)
+    converge_ray = torch.nan_to_num(allmap[7:8], 0, 0)  # Improvement 2.1: Global convergence
+    depth_alpha_cross = torch.nan_to_num(allmap[8:9], 0, 0)  # Improvement 2.5: Depth-Alpha cross term
     
     # DISABLED: Improvements 2.2 & 2.3
     # depth_variance = torch.nan_to_num(allmap[7:8], 0, 0)
     # alpha_concentration = torch.nan_to_num(allmap[8:9], 0, 0)
     
-    # DISABLED: Improvement 2.5: Extract depth-alpha cross term
-    # depth_alpha_cross = torch.nan_to_num(allmap[7:8], 0, 0)
-    
-    # Improvement 2.7: Extract depth variance for adaptive densification
-    depth_variance = torch.nan_to_num(allmap[7:8], 0, 0)
+    # DISABLED: Improvement 2.7: Extract depth variance for adaptive densification
+    # depth_variance = torch.nan_to_num(allmap[7:8], 0, 0)
     
     # assume the depth points form the 'surface' and generate psudo surface normal for regularizations.
     surf_normal = depth_to_normal(viewpoint_camera, surf_depth)
@@ -160,15 +159,14 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             'rend_dist': render_dist,
             'surf_depth': surf_depth,
             'surf_normal': surf_normal,
-            # DISABLED: Improvement 2.1
-            # 'converge_ray': converge_ray,
+            # Improvement 3.1: Enhanced depth convergence loss combination
+            'converge_ray': converge_ray,  # Improvement 2.1: Global convergence
+            'depth_alpha_cross': depth_alpha_cross,  # Improvement 2.5: Depth-Alpha cross term
             # DISABLED: Improvements 2.2 & 2.3
             # 'depth_variance': depth_variance,
             # 'alpha_concentration': alpha_concentration,
-            # DISABLED: Improvement 2.5
-            # 'depth_alpha_cross': depth_alpha_cross,
-            # Improvement 2.7
-            'depth_variance': depth_variance,
+            # DISABLED: Improvement 2.7
+            # 'depth_variance': depth_variance,
     })
 
     return rets

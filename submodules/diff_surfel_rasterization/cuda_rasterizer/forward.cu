@@ -329,12 +329,18 @@ renderCUDA(
     float last_G = 0;
     float cum_opacity = 0;
 	
-	// DISABLED: Improvement 2.1: Global depth convergence loss
+	// Improvement 3.1: Enhanced depth convergence loss combination
+	// Need both global convergence (2.1) and depth-alpha cross term (2.5)
+	
+	// Improvement 2.1: Global depth convergence loss
 	// Accumulate weighted depth and weights for computing mean depth
-	// float weighted_depth_sum = 0.0f;
-	// float weight_sum = 0.0f;
-	// float converge_ray = 0.0f;  // Global convergence loss for the ray
-	// float ray_mean_depth = 0.0f;  // Will be computed after first pass
+	float weighted_depth_sum = 0.0f;
+	float weight_sum = 0.0f;
+	float converge_ray = 0.0f;  // Global convergence loss for the ray
+	float ray_mean_depth = 0.0f;  // Will be computed after first pass
+	
+	// Improvement 2.5: Depth-Alpha cross term
+	float depth_alpha_cross = 0.0f;  // Cross term: Σ w_i * |d_i - d̄| * (1 - α_i)
 	
 	// DISABLED: For adaptive threshold and alpha concentration (Improvements 2.2 & 2.3)
 	// float depth_variance = 0.0f;
@@ -345,19 +351,12 @@ renderCUDA(
 	// float alpha_concentration_weight_sum = 0.0f;
 	// const float alpha_threshold = 0.1f;
 	
-	// DISABLED: Improvement 2.5: Depth-Alpha joint optimization
-	// Compute weighted mean depth and depth-alpha cross term
-	// float weighted_depth_sum = 0.0f;
-	// float weight_sum = 0.0f;
-	// float depth_alpha_cross = 0.0f;  // Cross term: Σ w_i * |d_i - d̄| * (1 - α_i)
-	// float ray_mean_depth = 0.0f;
-	
-	// Improvement 2.7: Adaptive densification based on depth variance
+	// DISABLED: Improvement 2.7: Adaptive densification based on depth variance
 	// Compute depth variance for each pixel to identify dispersion regions
-	float depth_variance = 0.0f;
-	float depth_mean = 0.0f;
-	float depth_weight_sum = 0.0f;
-	float depth_squared_sum = 0.0f;  // For variance calculation: E[X²]
+	// float depth_variance = 0.0f;
+	// float depth_mean = 0.0f;
+	// float depth_weight_sum = 0.0f;
+	// float depth_squared_sum = 0.0f;  // For variance calculation: E[X²]
 #endif
 
 	// Iterate over batches until all done or range is complete
@@ -475,40 +474,46 @@ renderCUDA(
             //     depth_alpha_cross += w * depth_diff * (1.0f - alpha);
             // }
             
-            // Improvement 2.7: Compute depth variance for adaptive densification
+            // DISABLED: Improvement 2.7: Compute depth variance for adaptive densification
             // Accumulate weighted depth statistics for variance calculation
-            depth_weight_sum += w;
-            if (depth_weight_sum > 1e-8f) {
-                float old_mean = depth_mean;
-                depth_mean = (depth_mean * (depth_weight_sum - w) + depth * w) / depth_weight_sum;
-                // Incremental variance calculation: Var = E[X²] - E[X]²
-                // Update E[X²] incrementally
-                depth_squared_sum += depth * depth * w;
-                // Compute variance: Var = (E[X²] - E[X]²) / sum(w)
-                depth_variance = (depth_squared_sum / depth_weight_sum) - (depth_mean * depth_mean);
-                // Ensure non-negative variance
-                if (depth_variance < 0.0f) depth_variance = 0.0f;
-            }
-            
-            // DISABLED: Improvement 2.1: Global depth convergence loss
-            // Accumulate weighted depth and weights, and compute incremental loss
-            // Update weighted mean depth incrementally
-            // float old_weight_sum = weight_sum;
-            // weighted_depth_sum += depth * w;
-            // weight_sum += w;
-            // 
-            // if (weight_sum > 1e-8f) {
-            //     // Update mean depth
-            //     float old_mean = (old_weight_sum > 1e-8f) ? (weighted_depth_sum - depth * w) / old_weight_sum : 0.0f;
-            //     ray_mean_depth = weighted_depth_sum / weight_sum;
-            //     
-            //     // Compute incremental contribution to convergence loss
-            //     // For current Gaussian: w * (depth - mean)^2
-            //     // But mean changes as we add more Gaussians, so we need to adjust previous contributions
-            //     // For simplicity, we compute: w * (depth - current_mean)^2
-            //     float depth_diff = depth - ray_mean_depth;
-            //     converge_ray += w * depth_diff * depth_diff;
+            // depth_weight_sum += w;
+            // if (depth_weight_sum > 1e-8f) {
+            //     float old_mean = depth_mean;
+            //     depth_mean = (depth_mean * (depth_weight_sum - w) + depth * w) / depth_weight_sum;
+            //     // Incremental variance calculation: Var = E[X²] - E[X]²
+            //     // Update E[X²] incrementally
+            //     depth_squared_sum += depth * depth * w;
+            //     // Compute variance: Var = (E[X²] - E[X]²) / sum(w)
+            //     depth_variance = (depth_squared_sum / depth_weight_sum) - (depth_mean * depth_mean);
+            //     // Ensure non-negative variance
+            //     if (depth_variance < 0.0f) depth_variance = 0.0f;
             // }
+            
+            // Improvement 3.1: Enhanced depth convergence loss combination
+            // Compute both global convergence (2.1) and depth-alpha cross term (2.5)
+            
+            // Improvement 2.1: Global depth convergence loss
+            // Accumulate weighted depth and weights, and compute incremental loss
+            float old_weight_sum = weight_sum;
+            weighted_depth_sum += depth * w;
+            weight_sum += w;
+            
+            if (weight_sum > 1e-8f) {
+                // Update mean depth
+                float old_mean = (old_weight_sum > 1e-8f) ? (weighted_depth_sum - depth * w) / old_weight_sum : 0.0f;
+                ray_mean_depth = weighted_depth_sum / weight_sum;
+                
+                // Compute incremental contribution to global convergence loss
+                // For current Gaussian: w * (depth - mean)^2
+                float depth_diff = depth - ray_mean_depth;
+                converge_ray += w * depth_diff * depth_diff;
+                
+                // Improvement 2.5: Depth-Alpha cross term
+                // Compute depth-alpha cross term: w * |depth - mean_depth| * (1 - alpha)
+                // This penalizes Gaussians that are far from mean depth AND have low alpha
+                float depth_diff_abs = fabsf(depth - ray_mean_depth);
+                depth_alpha_cross += w * depth_diff_abs * (1.0f - alpha);
+            }
             
             // DISABLED: Improvement 2.2: Adaptive threshold based on convergence degree
             // depth_weight_sum += w;
@@ -580,26 +585,23 @@ renderCUDA(
 		out_others[pix_id + MIDDEPTH_OFFSET * H * W] = median_depth;
 		out_others[pix_id + DISTORTION_OFFSET * H * W] = distortion;
 		
-		// DISABLED: Improvement 2.1: Finalize global convergence loss
-		// Compute final weighted mean depth
-		// if (weight_sum > 1e-8f) {
-		// 	ray_mean_depth = weighted_depth_sum / weight_sum;
-		// }
+		// Improvement 3.1: Enhanced depth convergence loss combination
+		// Output both global convergence (2.1) and depth-alpha cross term (2.5)
+		
+		// Improvement 2.1: Finalize global convergence loss
+		// Compute final weighted mean depth (already computed incrementally)
 		// Output global convergence loss
-		// Note: This is an approximation computed incrementally during traversal
-		// For exact computation, a second pass would be needed, but this approximation
-		// should work well in practice as it captures the convergence tendency
-		// out_others[pix_id + DEPTH_VARIANCE_OFFSET * H * W] = converge_ray;  // Reuse offset for global convergence
+		out_others[pix_id + DEPTH_VARIANCE_OFFSET * H * W] = converge_ray;
+		
+		// Improvement 2.5: Output depth-alpha cross term
+		out_others[pix_id + ALPHA_CONCENTRATION_OFFSET * H * W] = depth_alpha_cross;
 		
 		// DISABLED: Output for improvements 2.2 & 2.3
 		// out_others[pix_id + DEPTH_VARIANCE_OFFSET * H * W] = depth_variance;
 		// out_others[pix_id + ALPHA_CONCENTRATION_OFFSET * H * W] = alpha_concentration;
 		
-		// DISABLED: Improvement 2.5: Output depth-alpha cross term
-		// out_others[pix_id + DEPTH_VARIANCE_OFFSET * H * W] = depth_alpha_cross;
-		
-		// Improvement 2.7: Output depth variance for adaptive densification
-		out_others[pix_id + DEPTH_VARIANCE_OFFSET * H * W] = depth_variance;
+		// DISABLED: Improvement 2.7: Output depth variance for adaptive densification
+		// out_others[pix_id + DEPTH_VARIANCE_OFFSET * H * W] = depth_variance;
 
 		out_converge[pix_id] = Converge;  // Original adjacent constraint
 		// out_others[pix_id + MEDIAN_WEIGHT_OFFSET * H * W] = median_weight;

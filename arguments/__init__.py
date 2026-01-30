@@ -85,21 +85,25 @@ class OptimizationParams(ParamGroup):
         self.lambda_dssim = 0.2
         self.lambda_dist = 0.0
         self.lambda_normal = 0.05
-        self.lambda_converge = 7.0
-        # DISABLED: Improvement 2.1
-        # self.lambda_converge_ray = 2.0
+        # Improvement 3.1: Enhanced depth convergence loss combination
+        # L_converge_enhanced = λ1 * L_converge_local + λ2 * L_converge_global + λ3 * L_cross
+        self.lambda_converge_local = 7.0  # Local convergence loss (original adjacent constraint)
+        self.lambda_converge_global = 2.0  # Global convergence loss (Improvement 2.1)
+        self.lambda_converge_cross = 1.0  # Depth-Alpha cross term (Improvement 2.5)
+        
+        # Keep for backward compatibility
+        self.lambda_converge = self.lambda_converge_local
+        
         # DISABLED: Improvement 2.4
         # self.lambda_multiview_depth = 0.5  # Multi-view depth consistency loss weight
         # DISABLED: Improvements 2.2 & 2.3
         # self.lambda_alpha_concentration = 0.3
         # self.lambda_alpha_completeness = 0.1
-        # DISABLED: Improvement 2.5
-        # self.lambda_depth_alpha_cross = 1.0  # Depth-Alpha cross term loss weight
         self.opacity_cull = 0.05
         
-        # Improvement 2.7: Adaptive densification based on depth variance
-        self.depth_variance_threshold = 0.01  # Threshold for depth variance to trigger densification
-        self.adaptive_densify_enabled = True  # Enable adaptive densification
+        # DISABLED: Improvement 2.7: Adaptive densification based on depth variance
+        # self.depth_variance_threshold = 0.01  # Threshold for depth variance to trigger densification
+        # self.adaptive_densify_enabled = True  # Enable adaptive densification
 
         self.densification_interval = 100
         self.opacity_reset_interval = 3000
