@@ -327,7 +327,6 @@ renderCUDA(
     float first_depth = 0;
 	float last_depth = 0;
     float last_G = 0;
-    float last_alpha = 0.0f;  // Improvement 2.2.2: Track last alpha for weighted convergence loss
     float cum_opacity = 0;
 	
 	// DISABLED: Improvement 3.3: Multi-loss joint optimization
@@ -451,47 +450,13 @@ renderCUDA(
             //     median_contributor = contributor;
             // }
 
-            // Improvement 2.1.2: Improved cum_opacity calculation
-            // Original (from paper Eq. 9): cum_opacity += (alpha + 0.1) * G;
-            // The G term causes instability as it decays rapidly with distance
-            // Improved: Use alpha directly for more stable accumulation (removes G dependency)
-            cum_opacity += alpha;
-            
-            // Improvement 2.1.1: Adaptive threshold based on depth convergence degree
-            // Compute convergence degree from current depth difference
-            // DISABLED: Removed dependency on converge_ray (Improvement 3.3) - use only immediate depth difference
-            float convergence_degree = 1.0f;
-            if (last_depth > 0) {
-                // Use current depth difference as immediate convergence indicator
-                float depth_diff_relative = abs(depth - last_depth) / (min(depth, last_depth) + 1e-6f);
-                // Lower relative depth difference means better convergence
-                float immediate_convergence = 1.0f / (1.0f + depth_diff_relative * 100.0f);  // Map to [0, 1]
-                
-                // DISABLED: Improvement 3.3 - removed accumulated convergence from converge_ray
-                // float accumulated_convergence = 1.0f;
-                // if (weight_sum > 1e-8f && converge_ray > 1e-8f) {
-                //     float normalized_converge = converge_ray / (weight_sum + 1e-8f);
-                //     accumulated_convergence = 1.0f / (1.0f + normalized_converge * 10.0f);
-                // }
-                
-                // Use only immediate convergence (no accumulated convergence)
-                convergence_degree = immediate_convergence;
-            }
-            
-            // Adaptive threshold: better convergence -> higher threshold (select depth earlier)
-            float adaptive_threshold = 0.5f + 0.2f * convergence_degree;  // Range: [0.5, 0.7]
-            
-            // Use adaptive threshold for median depth selection
-            if (cum_opacity < adaptive_threshold) {
-                if (convergence_degree > 0.7f) {
-                    // Depth well converged, use current depth directly
-                    median_depth = depth;
-                } else {
-                    // Depth not well converged, use smoothed depth
-                    median_depth = last_depth > 0 ? (last_depth + depth) * 0.5 : depth;
-                }
+            // Cumulated opacity. Eq. (9) from paper Unbiased 2DGS.
+            if (cum_opacity < 0.6f) {
+                // Make the depth map smoother
+                median_depth = last_depth > 0 ? (last_depth + depth) * 0.5 : depth;
                 median_contributor = contributor;
             }
+            cum_opacity += (alpha + 0.1 * G);
             
             // DISABLED: Improvement 2.5: Depth-Alpha joint optimization
             // Accumulate weighted depth for computing mean depth
@@ -577,22 +542,13 @@ renderCUDA(
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * w;
 
-			// Improvement 2.2.2: Weighted depth convergence loss (use alpha weight)
-			// Original: min(G, last_G) * (depth - last_depth)^2
-			// Improved: Use alpha weight to more strongly penalize depth differences for high-alpha Gaussians
+			// Converge Loss - Original adjacent constraint
 			if((T > 0.09f)) {
 				if(last_converge > 0) {
-                    float depth_diff = abs(depth - last_depth);
-                    if (depth_diff <= ConvergeThreshold) {
-                        // Compute alpha weight: average of current and last alpha
-                        float alpha_weight = (alpha + last_alpha) * 0.5f;
-                        // Weighted convergence loss: alpha_weight * min(G, last_G) * depth_diff^2
-                        Converge += alpha_weight * min(G, last_G) * depth_diff * depth_diff;
-                    }
-                    // If depth_diff > ConvergeThreshold, no penalty (as before)
+                    Converge += abs(depth - last_depth) > ConvergeThreshold ?
+                        0 : min(G, last_G) * (depth - last_depth) * (depth - last_depth);
 				}
                 last_G = G;
-                last_alpha = alpha;  // Track alpha for next iteration
                 last_converge = contributor;
 			}
 			

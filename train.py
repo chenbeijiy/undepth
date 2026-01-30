@@ -12,6 +12,8 @@
 import os
 import sys
 from random import randint
+import time
+from datetime import timedelta
 
 import json
 import torch
@@ -57,6 +59,9 @@ def training(dataset: ModelParams,
 
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
+    
+    # Record training start time for total training time calculation
+    training_start_time = time.time()
 
     viewpoint_stack = None
     ema_loss_for_log = 0.0
@@ -200,8 +205,22 @@ def training(dataset: ModelParams,
 
                 progress_bar.update(10)
 
+            # Calculate total training time if this is the last iteration
+            total_training_time_for_report = None
             if iteration == opt.iterations:
+                total_training_time_for_report = time.time() - training_start_time
                 progress_bar.close()
+                
+                # Format total training time using timedelta (simpler)
+                time_delta = timedelta(seconds=int(total_training_time_for_report))
+                
+                # Log total training time to TensorBoard
+                if tb_writer is not None:
+                    tb_writer.add_scalar('training/total_time_seconds', total_training_time_for_report, iteration)
+                    tb_writer.add_scalar('training/total_time_hours', total_training_time_for_report / 3600.0, iteration)
+                
+                # Print total training time (timedelta automatically formats nicely)
+                print(f"\n[Training Complete] Total training time: {time_delta} ({total_training_time_for_report:.2f} seconds)")
 
             # Log and save
             if tb_writer is not None:
@@ -209,7 +228,7 @@ def training(dataset: ModelParams,
                 tb_writer.add_scalar('train_loss_patches/normal_loss', ema_normal_for_log, iteration)
 
             training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end),
-                            testing_iterations, scene, render, (pipe, background), dataset)
+                            testing_iterations, scene, render, (pipe, background), dataset, total_training_time_for_report)
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
@@ -332,7 +351,8 @@ def training_report(
     scene : Scene,
     renderFunc,
     renderArgs,
-    dataset: ModelParams):
+    dataset: ModelParams,
+    total_training_time=None):
     if tb_writer:
         tb_writer.add_scalar('train_loss_patches/reg_loss', Ll1.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
@@ -397,9 +417,18 @@ def training_report(
                 data[config['name']][f'{iteration}_psnr'] = psnr_test.item()
                 data[config['name']][f'{iteration}_l1'] = l1_test.item()
         
+        # Add total training time to output.json if available
+        if total_training_time is not None:
+            time_delta = timedelta(seconds=int(total_training_time))
+            data['training'] = {
+                'total_time_seconds': total_training_time,
+                'total_time_hours': total_training_time / 3600.0,
+                'total_time_formatted': str(time_delta)
+            }
+        
         # Write to output.json
         with open(os.path.join(scene.model_path, "output.json"), 'w') as file:
-            json.dump(data, file)
+            json.dump(data, file, indent=2)
 
         torch.cuda.empty_cache()
 

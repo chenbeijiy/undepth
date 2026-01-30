@@ -41,8 +41,7 @@ __device__ const float far_n = 100.0;
 __device__ const float FilterSize = 0.707106; // sqrt(2) / 2
 __device__ const float FilterInvSquare = 2.0f;
 
-// Improvement 2.2.1: Lower ConvergeThreshold for stricter depth convergence
-__device__ const float ConvergeThreshold = 0.5f;
+__device__ const float ConvergeThreshold = 1.0f;
 
 // Spherical harmonics coefficients
 __device__ const float SH_C0 = 0.28209479177387814f;
