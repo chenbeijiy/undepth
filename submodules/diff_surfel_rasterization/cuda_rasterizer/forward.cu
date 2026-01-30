@@ -330,18 +330,18 @@ renderCUDA(
     float last_alpha = 0.0f;  // Improvement 2.2.2: Track last alpha for weighted convergence loss
     float cum_opacity = 0;
 	
-	// Improvement 3.3: Multi-loss joint optimization
+	// DISABLED: Improvement 3.3: Multi-loss joint optimization
 	// Need both global convergence (2.1) and depth-alpha cross term (2.5) for converge_enhanced
 	
-	// Improvement 2.1: Global depth convergence loss
+	// DISABLED: Improvement 2.1: Global depth convergence loss
 	// Accumulate weighted depth and weights for computing mean depth
-	float weighted_depth_sum = 0.0f;
-	float weight_sum = 0.0f;
-	float converge_ray = 0.0f;  // Global convergence loss for the ray
-	float ray_mean_depth = 0.0f;  // Will be computed after first pass
+	// float weighted_depth_sum = 0.0f;
+	// float weight_sum = 0.0f;
+	// float converge_ray = 0.0f;  // Global convergence loss for the ray
+	// float ray_mean_depth = 0.0f;  // Will be computed after first pass
 	
-	// Improvement 2.5: Depth-Alpha cross term
-	float depth_alpha_cross = 0.0f;  // Cross term: Σ w_i * |d_i - d̄| * (1 - α_i)
+	// DISABLED: Improvement 2.5: Depth-Alpha cross term
+	// float depth_alpha_cross = 0.0f;  // Cross term: Σ w_i * |d_i - d̄| * (1 - α_i)
 	
 	// DISABLED: For adaptive threshold and alpha concentration (Improvements 2.2 & 2.3)
 	// float depth_variance = 0.0f;
@@ -458,7 +458,8 @@ renderCUDA(
             cum_opacity += alpha;
             
             // Improvement 2.1.1: Adaptive threshold based on depth convergence degree
-            // Compute convergence degree from current depth difference and accumulated converge_ray
+            // Compute convergence degree from current depth difference
+            // DISABLED: Removed dependency on converge_ray (Improvement 3.3) - use only immediate depth difference
             float convergence_degree = 1.0f;
             if (last_depth > 0) {
                 // Use current depth difference as immediate convergence indicator
@@ -466,15 +467,15 @@ renderCUDA(
                 // Lower relative depth difference means better convergence
                 float immediate_convergence = 1.0f / (1.0f + depth_diff_relative * 100.0f);  // Map to [0, 1]
                 
-                // Also consider accumulated converge_ray if available
-                float accumulated_convergence = 1.0f;
-                if (weight_sum > 1e-8f && converge_ray > 1e-8f) {
-                    float normalized_converge = converge_ray / (weight_sum + 1e-8f);
-                    accumulated_convergence = 1.0f / (1.0f + normalized_converge * 10.0f);
-                }
+                // DISABLED: Improvement 3.3 - removed accumulated convergence from converge_ray
+                // float accumulated_convergence = 1.0f;
+                // if (weight_sum > 1e-8f && converge_ray > 1e-8f) {
+                //     float normalized_converge = converge_ray / (weight_sum + 1e-8f);
+                //     accumulated_convergence = 1.0f / (1.0f + normalized_converge * 10.0f);
+                // }
                 
-                // Combine immediate and accumulated convergence
-                convergence_degree = (immediate_convergence * 0.6f + accumulated_convergence * 0.4f);
+                // Use only immediate convergence (no accumulated convergence)
+                convergence_degree = immediate_convergence;
             }
             
             // Adaptive threshold: better convergence -> higher threshold (select depth earlier)
@@ -522,31 +523,31 @@ renderCUDA(
             //     if (depth_variance < 0.0f) depth_variance = 0.0f;
             // }
             
-            // Improvement 3.3: Multi-loss joint optimization
+            // DISABLED: Improvement 3.3: Multi-loss joint optimization
             // Compute both global convergence (2.1) and depth-alpha cross term (2.5) for converge_enhanced
             
-            // Improvement 2.1: Global depth convergence loss
+            // DISABLED: Improvement 2.1: Global depth convergence loss
             // Accumulate weighted depth and weights, and compute incremental loss
-            float old_weight_sum = weight_sum;
-            weighted_depth_sum += depth * w;
-            weight_sum += w;
-            
-            if (weight_sum > 1e-8f) {
-                // Update mean depth
-                float old_mean = (old_weight_sum > 1e-8f) ? (weighted_depth_sum - depth * w) / old_weight_sum : 0.0f;
-                ray_mean_depth = weighted_depth_sum / weight_sum;
-                
-                // Compute incremental contribution to global convergence loss
-                // For current Gaussian: w * (depth - mean)^2
-                float depth_diff = depth - ray_mean_depth;
-                converge_ray += w * depth_diff * depth_diff;
-                
-                // Improvement 2.5: Depth-Alpha cross term
-                // Compute depth-alpha cross term: w * |depth - mean_depth| * (1 - alpha)
-                // This penalizes Gaussians that are far from mean depth AND have low alpha
-                float depth_diff_abs = fabsf(depth - ray_mean_depth);
-                depth_alpha_cross += w * depth_diff_abs * (1.0f - alpha);
-            }
+            // float old_weight_sum = weight_sum;
+            // weighted_depth_sum += depth * w;
+            // weight_sum += w;
+            // 
+            // if (weight_sum > 1e-8f) {
+            //     // Update mean depth
+            //     float old_mean = (old_weight_sum > 1e-8f) ? (weighted_depth_sum - depth * w) / old_weight_sum : 0.0f;
+            //     ray_mean_depth = weighted_depth_sum / weight_sum;
+            //     
+            //     // Compute incremental contribution to global convergence loss
+            //     // For current Gaussian: w * (depth - mean)^2
+            //     float depth_diff = depth - ray_mean_depth;
+            //     converge_ray += w * depth_diff * depth_diff;
+            //     
+            //     // Improvement 2.5: Depth-Alpha cross term
+            //     // Compute depth-alpha cross term: w * |depth - mean_depth| * (1 - alpha)
+            //     // This penalizes Gaussians that are far from mean depth AND have low alpha
+            //     float depth_diff_abs = fabsf(depth - ray_mean_depth);
+            //     depth_alpha_cross += w * depth_diff_abs * (1.0f - alpha);
+            // }
             
             // DISABLED: Improvement 2.2: Adaptive threshold based on convergence degree
             // depth_weight_sum += w;
@@ -627,16 +628,16 @@ renderCUDA(
 		out_others[pix_id + MIDDEPTH_OFFSET * H * W] = median_depth;
 		out_others[pix_id + DISTORTION_OFFSET * H * W] = distortion;
 		
-		// Improvement 3.3: Multi-loss joint optimization
+		// DISABLED: Improvement 3.3: Multi-loss joint optimization
 		// Output both global convergence (2.1) and depth-alpha cross term (2.5) for converge_enhanced
 		
-		// Improvement 2.1: Finalize global convergence loss
+		// DISABLED: Improvement 2.1: Finalize global convergence loss
 		// Compute final weighted mean depth (already computed incrementally)
 		// Output global convergence loss
-		out_others[pix_id + DEPTH_VARIANCE_OFFSET * H * W] = converge_ray;
+		// out_others[pix_id + DEPTH_VARIANCE_OFFSET * H * W] = converge_ray;
 		
-		// Improvement 2.5: Output depth-alpha cross term
-		out_others[pix_id + ALPHA_CONCENTRATION_OFFSET * H * W] = depth_alpha_cross;
+		// DISABLED: Improvement 2.5: Output depth-alpha cross term
+		// out_others[pix_id + ALPHA_CONCENTRATION_OFFSET * H * W] = depth_alpha_cross;
 		
 		// DISABLED: Output for improvements 2.2 & 2.3
 		// out_others[pix_id + DEPTH_VARIANCE_OFFSET * H * W] = depth_variance;
