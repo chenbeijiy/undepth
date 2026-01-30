@@ -344,6 +344,13 @@ renderCUDA(
 	// float alpha_concentration_mean = 0.0f;
 	// float alpha_concentration_weight_sum = 0.0f;
 	// const float alpha_threshold = 0.1f;
+	
+	// Improvement 2.5: Depth-Alpha joint optimization
+	// Compute weighted mean depth and depth-alpha cross term
+	float weighted_depth_sum = 0.0f;
+	float weight_sum = 0.0f;
+	float depth_alpha_cross = 0.0f;  // Cross term: Σ w_i * |d_i - d̄| * (1 - α_i)
+	float ray_mean_depth = 0.0f;
 #endif
 
 	// Iterate over batches until all done or range is complete
@@ -445,6 +452,21 @@ renderCUDA(
                 median_contributor = contributor;
             }
             cum_opacity += (alpha + 0.1 * G);
+            
+            // Improvement 2.5: Depth-Alpha joint optimization
+            // Accumulate weighted depth for computing mean depth
+            weighted_depth_sum += depth * w;
+            weight_sum += w;
+            
+            // Compute current mean depth (incremental)
+            if (weight_sum > 1e-8f) {
+                ray_mean_depth = weighted_depth_sum / weight_sum;
+                
+                // Compute depth-alpha cross term: w * |depth - mean_depth| * (1 - alpha)
+                // This penalizes Gaussians that are far from mean depth AND have low alpha
+                float depth_diff = fabsf(depth - ray_mean_depth);
+                depth_alpha_cross += w * depth_diff * (1.0f - alpha);
+            }
             
             // DISABLED: Improvement 2.1: Global depth convergence loss
             // Accumulate weighted depth and weights, and compute incremental loss
@@ -550,6 +572,9 @@ renderCUDA(
 		// DISABLED: Output for improvements 2.2 & 2.3
 		// out_others[pix_id + DEPTH_VARIANCE_OFFSET * H * W] = depth_variance;
 		// out_others[pix_id + ALPHA_CONCENTRATION_OFFSET * H * W] = alpha_concentration;
+		
+		// Improvement 2.5: Output depth-alpha cross term
+		out_others[pix_id + DEPTH_VARIANCE_OFFSET * H * W] = depth_alpha_cross;
 
 		out_converge[pix_id] = Converge;  // Original adjacent constraint
 		// out_others[pix_id + MEDIAN_WEIGHT_OFFSET * H * W] = median_weight;

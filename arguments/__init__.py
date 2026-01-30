@@ -88,10 +88,12 @@ class OptimizationParams(ParamGroup):
         self.lambda_converge = 7.0
         # DISABLED: Improvement 2.1
         # self.lambda_converge_ray = 2.0
-        self.lambda_multiview_depth = 0.5  # Improvement 2.4: Multi-view depth consistency loss weight
+        # DISABLED: Improvement 2.4
+        # self.lambda_multiview_depth = 0.5  # Multi-view depth consistency loss weight
         # DISABLED: Improvements 2.2 & 2.3
         # self.lambda_alpha_concentration = 0.3
         # self.lambda_alpha_completeness = 0.1
+        self.lambda_depth_alpha_cross = 1.0  # Improvement 2.5: Depth-Alpha cross term loss weight
         self.opacity_cull = 0.05
 
         self.densification_interval = 100
