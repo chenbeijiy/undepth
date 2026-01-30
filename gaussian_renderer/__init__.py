@@ -141,8 +141,11 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # depth_variance = torch.nan_to_num(allmap[7:8], 0, 0)
     # alpha_concentration = torch.nan_to_num(allmap[8:9], 0, 0)
     
-    # Improvement 2.5: Extract depth-alpha cross term
-    depth_alpha_cross = torch.nan_to_num(allmap[7:8], 0, 0)
+    # DISABLED: Improvement 2.5: Extract depth-alpha cross term
+    # depth_alpha_cross = torch.nan_to_num(allmap[7:8], 0, 0)
+    
+    # Improvement 2.7: Extract depth variance for adaptive densification
+    depth_variance = torch.nan_to_num(allmap[7:8], 0, 0)
     
     # assume the depth points form the 'surface' and generate psudo surface normal for regularizations.
     surf_normal = depth_to_normal(viewpoint_camera, surf_depth)
@@ -162,8 +165,10 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             # DISABLED: Improvements 2.2 & 2.3
             # 'depth_variance': depth_variance,
             # 'alpha_concentration': alpha_concentration,
-            # Improvement 2.5
-            'depth_alpha_cross': depth_alpha_cross,
+            # DISABLED: Improvement 2.5
+            # 'depth_alpha_cross': depth_alpha_cross,
+            # Improvement 2.7
+            'depth_variance': depth_variance,
     })
 
     return rets

@@ -345,12 +345,19 @@ renderCUDA(
 	// float alpha_concentration_weight_sum = 0.0f;
 	// const float alpha_threshold = 0.1f;
 	
-	// Improvement 2.5: Depth-Alpha joint optimization
+	// DISABLED: Improvement 2.5: Depth-Alpha joint optimization
 	// Compute weighted mean depth and depth-alpha cross term
-	float weighted_depth_sum = 0.0f;
-	float weight_sum = 0.0f;
-	float depth_alpha_cross = 0.0f;  // Cross term: Σ w_i * |d_i - d̄| * (1 - α_i)
-	float ray_mean_depth = 0.0f;
+	// float weighted_depth_sum = 0.0f;
+	// float weight_sum = 0.0f;
+	// float depth_alpha_cross = 0.0f;  // Cross term: Σ w_i * |d_i - d̄| * (1 - α_i)
+	// float ray_mean_depth = 0.0f;
+	
+	// Improvement 2.7: Adaptive densification based on depth variance
+	// Compute depth variance for each pixel to identify dispersion regions
+	float depth_variance = 0.0f;
+	float depth_mean = 0.0f;
+	float depth_weight_sum = 0.0f;
+	float depth_squared_sum = 0.0f;  // For variance calculation: E[X²]
 #endif
 
 	// Iterate over batches until all done or range is complete
@@ -453,19 +460,34 @@ renderCUDA(
             }
             cum_opacity += (alpha + 0.1 * G);
             
-            // Improvement 2.5: Depth-Alpha joint optimization
+            // DISABLED: Improvement 2.5: Depth-Alpha joint optimization
             // Accumulate weighted depth for computing mean depth
-            weighted_depth_sum += depth * w;
-            weight_sum += w;
+            // weighted_depth_sum += depth * w;
+            // weight_sum += w;
+            // 
+            // // Compute current mean depth (incremental)
+            // if (weight_sum > 1e-8f) {
+            //     ray_mean_depth = weighted_depth_sum / weight_sum;
+            //     
+            //     // Compute depth-alpha cross term: w * |depth - mean_depth| * (1 - alpha)
+            //     // This penalizes Gaussians that are far from mean depth AND have low alpha
+            //     float depth_diff = fabsf(depth - ray_mean_depth);
+            //     depth_alpha_cross += w * depth_diff * (1.0f - alpha);
+            // }
             
-            // Compute current mean depth (incremental)
-            if (weight_sum > 1e-8f) {
-                ray_mean_depth = weighted_depth_sum / weight_sum;
-                
-                // Compute depth-alpha cross term: w * |depth - mean_depth| * (1 - alpha)
-                // This penalizes Gaussians that are far from mean depth AND have low alpha
-                float depth_diff = fabsf(depth - ray_mean_depth);
-                depth_alpha_cross += w * depth_diff * (1.0f - alpha);
+            // Improvement 2.7: Compute depth variance for adaptive densification
+            // Accumulate weighted depth statistics for variance calculation
+            depth_weight_sum += w;
+            if (depth_weight_sum > 1e-8f) {
+                float old_mean = depth_mean;
+                depth_mean = (depth_mean * (depth_weight_sum - w) + depth * w) / depth_weight_sum;
+                // Incremental variance calculation: Var = E[X²] - E[X]²
+                // Update E[X²] incrementally
+                depth_squared_sum += depth * depth * w;
+                // Compute variance: Var = (E[X²] - E[X]²) / sum(w)
+                depth_variance = (depth_squared_sum / depth_weight_sum) - (depth_mean * depth_mean);
+                // Ensure non-negative variance
+                if (depth_variance < 0.0f) depth_variance = 0.0f;
             }
             
             // DISABLED: Improvement 2.1: Global depth convergence loss
@@ -573,8 +595,11 @@ renderCUDA(
 		// out_others[pix_id + DEPTH_VARIANCE_OFFSET * H * W] = depth_variance;
 		// out_others[pix_id + ALPHA_CONCENTRATION_OFFSET * H * W] = alpha_concentration;
 		
-		// Improvement 2.5: Output depth-alpha cross term
-		out_others[pix_id + DEPTH_VARIANCE_OFFSET * H * W] = depth_alpha_cross;
+		// DISABLED: Improvement 2.5: Output depth-alpha cross term
+		// out_others[pix_id + DEPTH_VARIANCE_OFFSET * H * W] = depth_alpha_cross;
+		
+		// Improvement 2.7: Output depth variance for adaptive densification
+		out_others[pix_id + DEPTH_VARIANCE_OFFSET * H * W] = depth_variance;
 
 		out_converge[pix_id] = Converge;  // Original adjacent constraint
 		// out_others[pix_id + MEDIAN_WEIGHT_OFFSET * H * W] = median_weight;

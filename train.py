@@ -67,7 +67,8 @@ def training(dataset: ModelParams,
     ema_alpha_completeness_for_log = 0.0
     ema_converge_ray_for_log = 0.0
     ema_multiview_depth_for_log = 0.0
-    ema_depth_alpha_cross_for_log = 0.0  # Improvement 2.5
+    # DISABLED: Improvement 2.5
+    # ema_depth_alpha_cross_for_log = 0.0
 
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
@@ -155,16 +156,17 @@ def training(dataset: ModelParams,
         #     )
         multiview_depth_loss = torch.tensor(0.0, device="cuda")
         
-        # Improvement 2.5: Depth-Alpha joint optimization
-        lambda_depth_alpha_cross = opt.lambda_depth_alpha_cross if iteration > 10000 else 0.0
+        # DISABLED: Improvement 2.5: Depth-Alpha joint optimization
+        # lambda_depth_alpha_cross = opt.lambda_depth_alpha_cross if iteration > 10000 else 0.0
+        # depth_alpha_cross_loss = torch.tensor(0.0, device="cuda")
+        # 
+        # if lambda_depth_alpha_cross > 0:
+        #     # Extract depth-alpha cross term from render package
+        #     depth_alpha_cross = render_pkg.get('depth_alpha_cross', torch.tensor(0.0, device="cuda"))
+        #     depth_alpha_cross_loss = lambda_depth_alpha_cross * depth_alpha_cross.mean()
+        # else:
+        #     depth_alpha_cross_loss = torch.tensor(0.0, device="cuda")
         depth_alpha_cross_loss = torch.tensor(0.0, device="cuda")
-        
-        if lambda_depth_alpha_cross > 0:
-            # Extract depth-alpha cross term from render package
-            depth_alpha_cross = render_pkg.get('depth_alpha_cross', torch.tensor(0.0, device="cuda"))
-            depth_alpha_cross_loss = lambda_depth_alpha_cross * depth_alpha_cross.mean()
-        else:
-            depth_alpha_cross_loss = torch.tensor(0.0, device="cuda")
 
         # loss
         total_loss = loss + dist_loss + normal_loss + converge_loss + converge_ray_loss + multiview_depth_loss + depth_alpha_cross_loss
@@ -186,7 +188,8 @@ def training(dataset: ModelParams,
             # DISABLED: Improvements 2.2 & 2.3
             # ema_alpha_concentration_for_log = 0.4 * alpha_concentration_loss.item() + 0.6 * ema_alpha_concentration_for_log
             # ema_alpha_completeness_for_log = 0.4 * alpha_completeness_loss.item() + 0.6 * ema_alpha_completeness_for_log
-            ema_depth_alpha_cross_for_log = 0.4 * depth_alpha_cross_loss.item() + 0.6 * ema_depth_alpha_cross_for_log  # Improvement 2.5
+            # DISABLED: Improvement 2.5
+            # ema_depth_alpha_cross_for_log = 0.4 * depth_alpha_cross_loss.item() + 0.6 * ema_depth_alpha_cross_for_log
 
             if iteration % 10 == 0:
                 loss_dict = {
@@ -194,7 +197,8 @@ def training(dataset: ModelParams,
                     # "distort": f"{ema_dist_for_log:.{5}f}",
                     "normal": f"{ema_normal_for_log:.{5}f}",
                     "converge": f"{ema_converge_for_log:.{5}f}",
-                    "depth_alpha": f"{ema_depth_alpha_cross_for_log:.{5}f}",  # Improvement 2.5
+                    # DISABLED: Improvement 2.5
+                    # "depth_alpha": f"{ema_depth_alpha_cross_for_log:.{5}f}",
                     # DISABLED: Improvement 2.4
                     # "multiview": f"{ema_multiview_depth_for_log:.{5}f}",
                     # DISABLED: Improvement 2.1
@@ -226,6 +230,44 @@ def training(dataset: ModelParams,
             if iteration < opt.densify_until_iter:
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
+                
+                # Improvement 2.7: Adaptive densification based on depth variance
+                if opt.adaptive_densify_enabled and iteration > opt.densify_from_iter:
+                    depth_variance = render_pkg.get('depth_variance', None)
+                    if depth_variance is not None:
+                        # Detect depth dispersion regions (holes risk areas)
+                        dispersion_mask = depth_variance.squeeze() > opt.depth_variance_threshold  # (H, W)
+                        
+                        if dispersion_mask.any():
+                            # Get 2D positions of visible Gaussians
+                            # viewspace_point_tensor is in NDC coordinates [-1, 1], convert to pixel coordinates
+                            means2D = viewspace_point_tensor.detach()
+                            H, W = viewpoint_cam.image_height, viewpoint_cam.image_width
+                            
+                            # Convert NDC coordinates to pixel coordinates
+                            # NDC: [-1, 1] -> Pixel: [0, W-1] and [0, H-1]
+                            pixel_coords = torch.zeros_like(means2D[:, :2])
+                            pixel_coords[:, 0] = (means2D[:, 0] + 1.0) * (W - 1) / 2.0  # x coordinate
+                            pixel_coords[:, 1] = (means2D[:, 1] + 1.0) * (H - 1) / 2.0  # y coordinate
+                            pixel_coords = pixel_coords.long()  # (N, 2)
+                            
+                            # Clamp to valid image bounds
+                            pixel_coords[:, 0] = torch.clamp(pixel_coords[:, 0], 0, W - 1)
+                            pixel_coords[:, 1] = torch.clamp(pixel_coords[:, 1], 0, H - 1)
+                            
+                            # Check which Gaussians are in dispersion regions
+                            dispersion_at_gaussians = dispersion_mask[pixel_coords[:, 1], pixel_coords[:, 0]]  # (N,)
+                            
+                            # Combine with visibility filter
+                            adaptive_densify_filter = visibility_filter & dispersion_at_gaussians
+                            
+                            # Add densification stats for Gaussians in dispersion regions
+                            # Increase gradient accumulation to encourage densification
+                            if adaptive_densify_filter.any():
+                                # Add extra gradient accumulation for adaptive densification
+                                extra_grad = torch.norm(viewspace_point_tensor.grad[adaptive_densify_filter], dim=-1, keepdim=True)
+                                gaussians.xyz_gradient_accum[adaptive_densify_filter] += extra_grad * 2.0  # Boost by 2x
+                                gaussians.denom[adaptive_densify_filter] += 1
 
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None

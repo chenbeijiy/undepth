@@ -93,8 +93,13 @@ class OptimizationParams(ParamGroup):
         # DISABLED: Improvements 2.2 & 2.3
         # self.lambda_alpha_concentration = 0.3
         # self.lambda_alpha_completeness = 0.1
-        self.lambda_depth_alpha_cross = 1.0  # Improvement 2.5: Depth-Alpha cross term loss weight
+        # DISABLED: Improvement 2.5
+        # self.lambda_depth_alpha_cross = 1.0  # Depth-Alpha cross term loss weight
         self.opacity_cull = 0.05
+        
+        # Improvement 2.7: Adaptive densification based on depth variance
+        self.depth_variance_threshold = 0.01  # Threshold for depth variance to trigger densification
+        self.adaptive_densify_enabled = True  # Enable adaptive densification
 
         self.densification_interval = 100
         self.opacity_reset_interval = 3000
