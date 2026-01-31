@@ -88,15 +88,15 @@ class OptimizationParams(ParamGroup):
         # Improvement 3.3: Multi-loss joint optimization
         # L_converge_enhanced = λ1 * L_converge_local + λ2 * L_converge_global + λ3 * L_cross
         self.lambda_converge_local = 7.0  # Local convergence loss (original adjacent constraint)
-        self.lambda_converge_global = 2.0  # Global convergence loss (Improvement 2.1)
-        self.lambda_converge_cross = 1.0  # Depth-Alpha cross term (Improvement 2.5)
+        # self.lambda_converge_global = 2.0  # Global convergence loss (Improvement 2.1)
+        # self.lambda_converge_cross = 1.0  # Depth-Alpha cross term (Improvement 2.5)
         
         # Keep for backward compatibility
         self.lambda_converge = self.lambda_converge_local
         
         # Improvement 3.3: Multi-loss joint optimization parameters
-        self.lambda_multiview_depth = 0.5  # Multi-view depth consistency loss weight
-        self.lambda_alpha_completeness = 0.1  # Alpha completeness loss weight
+        # self.lambda_multiview_depth = 0.5  # Multi-view depth consistency loss weight
+        # self.lambda_alpha_completeness = 0.1  # Alpha completeness loss weight
         self.opacity_cull = 0.05
         
         # DISABLED: Improvement 2.7: Adaptive densification based on depth variance

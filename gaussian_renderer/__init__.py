@@ -136,8 +136,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     
     # Improvement 3.3: Multi-loss joint optimization
     # Extract global convergence (2.1) and depth-alpha cross term (2.5) for converge_enhanced
-    converge_ray = torch.nan_to_num(allmap[7:8], 0, 0)  # Improvement 2.1: Global convergence
-    depth_alpha_cross = torch.nan_to_num(allmap[8:9], 0, 0)  # Improvement 2.5: Depth-Alpha cross term
+    # converge_ray = torch.nan_to_num(allmap[7:8], 0, 0)  # Improvement 2.1: Global convergence
+    # depth_alpha_cross = torch.nan_to_num(allmap[8:9], 0, 0)  # Improvement 2.5: Depth-Alpha cross term
     
     # DISABLED: Improvements 2.2 & 2.3
     # depth_variance = torch.nan_to_num(allmap[7:8], 0, 0)
@@ -160,8 +160,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             'surf_depth': surf_depth,
             'surf_normal': surf_normal,
             # Improvement 3.3: Multi-loss joint optimization
-            'converge_ray': converge_ray,  # Improvement 2.1: Global convergence
-            'depth_alpha_cross': depth_alpha_cross,  # Improvement 2.5: Depth-Alpha cross term
+            # 'converge_ray': converge_ray,  # Improvement 2.1: Global convergence
+            # 'depth_alpha_cross': depth_alpha_cross,  # Improvement 2.5: Depth-Alpha cross term
             # DISABLED: Improvements 2.2 & 2.3
             # 'depth_variance': depth_variance,
             # 'alpha_concentration': alpha_concentration,
