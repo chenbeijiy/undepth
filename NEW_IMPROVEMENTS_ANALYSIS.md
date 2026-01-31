@@ -100,19 +100,6 @@ cum_opacity += alpha * (1.0f + 0.1f * G);  // G作为权重因子，而不是直
 // 或者更简单：cum_opacity += alpha;  // 直接使用alpha
 ```
 
-#### **改进3：基于深度置信度的深度选择**
-
-**核心思想**：选择深度时考虑该深度的收敛程度和alpha大小
-
-```cpp
-// 计算深度置信度
-float depth_confidence = alpha * (1.0f - converge_ray_normalized);
-// 选择置信度最高的深度
-if (depth_confidence > max_confidence) {
-    max_confidence = depth_confidence;
-    median_depth = depth;
-}
-```
 
 ### 2.2 改进深度收敛损失（关键改进）
 
@@ -179,28 +166,6 @@ def spatial_depth_smoothness_loss(surf_depth, lambda_smooth=0.1):
 - **计算开销小**：只需要计算梯度，开销很小
 - **不破坏细节**：可以通过mask只在有效表面区域计算
 
-### 2.4 深度置信度加权TSDF融合（新改进）
-
-#### **核心思想**：在TSDF融合时，给收敛好的深度更高权重
-
-```python
-def compute_sdf_perframe_with_confidence(i, points, depthmap, confidence_map, viewpoint_cam):
-    """
-    使用深度置信度加权的SDF计算
-    """
-    # ... 投影计算 ...
-    sampled_depth = grid_sample(depthmap, pix_coords)
-    sampled_confidence = grid_sample(confidence_map, pix_coords)  # 深度置信度图
-    
-    sdf = (sampled_depth - z)
-    # 使用置信度加权
-    weight = sampled_confidence  # 置信度作为权重
-    return sdf, sampled_rgb, mask_proj, weight
-```
-
-**优势**：
-- **改善TSDF融合质量**：给高质量深度更高权重
-- **减少噪声**：低质量深度的贡献被降低
 
 ### 2.5 渐进式深度收敛（新改进）
 
@@ -234,8 +199,6 @@ else:
    - **改进2.3**：空间深度平滑损失
 
 3. **低优先级（可选）**：
-   - **改进2.1.3**：基于深度置信度的深度选择
-   - **改进2.4**：深度置信度加权TSDF融合
    - **改进2.5**：渐进式深度收敛
 
 ### 3.2 实施建议

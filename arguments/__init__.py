@@ -99,9 +99,18 @@ class OptimizationParams(ParamGroup):
         # self.lambda_alpha_completeness = 0.1  # Alpha completeness loss weight
         self.opacity_cull = 0.05
         
-        # DISABLED: Improvement 2.7: Adaptive densification based on depth variance
-        # self.depth_variance_threshold = 0.01  # Threshold for depth variance to trigger densification
-        # self.adaptive_densify_enabled = True  # Enable adaptive densification
+        # DISABLED: Innovation 6: Adaptive Densification for Holes
+        # self.adaptive_densify_enabled = True # Enable adaptive densification for holes
+        # self.adaptive_densify_depth_var_threshold = 0.01  # Depth variance threshold for hole detection
+        # self.adaptive_densify_alpha_threshold = 0.5  # Alpha threshold for hole detection
+        # self.adaptive_densify_max_gaussians = 1000  # Maximum number of Gaussians to add per iteration
+        # self.adaptive_densify_interval = 500  # Interval for adaptive densification (iterations)
+        
+        # Innovation 3: Adaptive Alpha Enhancement
+        self.adaptive_alpha_enhance_enabled = False  # Enable adaptive alpha enhancement
+        self.lambda_alpha_enhance = 0.2  # Alpha enhancement loss weight
+        self.alpha_enhance_from_iter = 5000  # Start iteration for alpha enhancement
+        self.alpha_enhance_depth_var_scale = 10.0  # Depth variance scale factor for hole detection sensitivity
 
         self.densification_interval = 100
         self.opacity_reset_interval = 3000

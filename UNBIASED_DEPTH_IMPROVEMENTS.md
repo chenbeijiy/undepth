@@ -120,14 +120,6 @@ $$\mathcal{L}_{converge\_ray} = \sum_{i=1}^{n} w_i (d_i - \bar{d}_{ray})^2$$
 - 相邻约束：只惩罚 $(d_i - d_{i-1})^2$，通过链式传导
 - 射线全局约束：直接惩罚所有 $(d_i - \bar{d}_{ray})^2$，更直接有效
 
-#### **改进2：多尺度深度收敛**
-
-在不同尺度下强制深度收敛：
-
-$$\mathcal{L}_{converge\_multiscale} = \sum_{s \in \{1,2,4\}} \lambda_s \mathcal{L}_{converge}^s$$
-
-其中 $\mathcal{L}_{converge}^s$ 是在尺度 $s$ 下的深度收敛损失。
-
 ---
 
 ### 2.2 自适应Threshold的Median Depth
@@ -190,24 +182,6 @@ $$\mathcal{L}_{multi\_view\_depth} = \sum_{v_1, v_2} \sum_{\mathbf{x}} \|\text{p
 
 ---
 
-### 2.5 深度-Alpha联合优化
-
-#### **改进：深度-Alpha协同损失**
-
-同时约束深度收敛和alpha集中：
-
-$$\mathcal{L}_{depth\_alpha\_joint} = \lambda_1 \mathcal{L}_{converge} + \lambda_2 \mathcal{L}_{alpha\_concentration}$$
-
-但添加**交叉项**：
-
-$$\mathcal{L}_{cross} = \sum_{i=1}^{n} w_i \cdot |d_i - \bar{d}| \cdot (1 - \alpha_i)$$
-
-**物理意义**：
-- 深度偏离平均的高斯，如果alpha也小，惩罚更大
-- 强制深度收敛和alpha集中同时发生
-
----
-
 ### 2.6 视角相关的深度正则化
 
 #### **改进：视角相关的深度稳定性**
@@ -241,33 +215,6 @@ if dispersion_mask.any():
     densify_in_regions(dispersion_mask)
 ```
 
----
-
-## 三、综合改进方案
-
-### 3.1 增强的深度收敛损失组合
-
-$$\mathcal{L}_{converge\_enhanced} = \lambda_1 \mathcal{L}_{converge\_local} + \lambda_2 \mathcal{L}_{converge\_global} + \lambda_3 \mathcal{L}_{cross}$$
-
-其中：
-- $\mathcal{L}_{converge\_local}$：原始相邻高斯约束
-- $\mathcal{L}_{converge\_global}$：全局深度一致性
-- $\mathcal{L}_{cross}$：深度-Alpha交叉项
-
-### 3.2 自适应Median Depth
-
-$$\text{median\_depth}_{adaptive} = \arg\min_d \sum_{i=1}^{n} w_i \cdot \text{weight}(i) \cdot |d_i - d|$$
-
-其中权重 $\text{weight}(i)$ 考虑：
-- 深度收敛程度
-- Alpha大小
-- 视角一致性
-
-### 3.3 多损失联合优化
-
-$$\mathcal{L}_{total} = \mathcal{L}_{rgb} + \lambda_1 \mathcal{L}_{converge\_enhanced} + \lambda_2 \mathcal{L}_{alpha\_completeness} + \lambda_3 \mathcal{L}_{multi\_view\_depth}$$
-
----
 
 ## 四、具体实现建议
 
@@ -363,7 +310,6 @@ def alpha_concentration_loss(depths, alphas, alpha_threshold=0.1, lambda_ac=0.3)
 | 固定threshold | 自适应threshold | 适应不同场景 |
 | 缺乏alpha约束 | Alpha集中度损失 | 直接提升alpha饱和度 |
 | 单视角优化 | 多视角深度一致性 | 跨视角深度一致 |
-| 深度-Alpha分离 | 深度-Alpha联合优化 | 协同优化 |
 
 ### 5.2 解决剩余的坑洞
 
@@ -372,40 +318,4 @@ def alpha_concentration_loss(depths, alphas, alpha_threshold=0.1, lambda_ac=0.3)
 2. **Alpha分散** → Alpha集中度损失解决
 3. **多视角不一致** → 多视角深度一致性解决
 4. **Threshold不合适** → 自适应threshold解决
-
----
-
-## 六、实施建议
-
-### 6.1 渐进式改进
-
-1. **第一步**：实现全局深度收敛损失
-2. **第二步**：添加Alpha集中度损失
-3. **第三步**：实现自适应threshold
-4. **第四步**：添加多视角一致性（如果计算资源允许）
-
-### 6.2 参数调优策略
-
-- **早期训练**：使用局部收敛损失（稳定）
-- **中期训练**：加入全局收敛损失
-- **后期训练**：加入alpha集中度和多视角一致性
-
-### 6.3 计算开销考虑
-
-- **全局收敛损失**：需要对所有高斯计算，开销增加约10-15%
-- **多视角一致性**：需要存储多视角深度，开销增加约20-30%
-- 建议：先实现全局收敛和alpha集中度，这两个最重要且开销较小
-
----
-
-## 七、总结
-
-论文的创新是重要基础，但仍有改进空间：
-
-1. **深度收敛损失**可以扩展到全局和跨视角
-2. **Median Depth**的threshold应该自适应
-3. **Alpha约束**应该更直接和强烈
-4. **多视角一致性**对消除坑洞至关重要
-
-这些改进应该能够解决论文无法处理的剩余坑洞问题。
 
