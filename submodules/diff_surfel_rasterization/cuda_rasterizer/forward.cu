@@ -327,6 +327,8 @@ renderCUDA(
     float first_depth = 0;
 	float last_depth = 0;
     float last_G = 0;
+    // DISABLED: Improvement 2.2.2: Track last alpha for weighted convergence loss
+    // float last_alpha = 0.0f;
     float cum_opacity = 0;
 	
 	// DISABLED: Improvement 3.3: Multi-loss joint optimization
@@ -450,12 +452,31 @@ renderCUDA(
             //     median_contributor = contributor;
             // }
 
+            // DISABLED: Improvement 2.1.1: Adaptive threshold based on depth convergence degree
+            // float convergence_degree = 1.0f;
+            // if (last_depth > 0) {
+            //     float depth_diff_relative = fabsf(depth - last_depth) / (fminf(depth, last_depth) + 1e-6f);
+            //     float immediate_convergence = 1.0f / (1.0f + depth_diff_relative * 100.0f);
+            //     convergence_degree = immediate_convergence;
+            // }
+            // float adaptive_threshold = 0.5f + 0.2f * convergence_degree;
+            // if (cum_opacity < adaptive_threshold) {
+            //     if (convergence_degree > 0.7f) {
+            //         median_depth = depth;
+            //     } else {
+            //         median_depth = last_depth > 0 ? (last_depth + depth) * 0.5 : depth;
+            //     }
+            //     median_contributor = contributor;
+            // }
+
             // Cumulated opacity. Eq. (9) from paper Unbiased 2DGS.
             if (cum_opacity < 0.6f) {
                 // Make the depth map smoother
                 median_depth = last_depth > 0 ? (last_depth + depth) * 0.5 : depth;
                 median_contributor = contributor;
             }
+            // DISABLED: Improvement 2.1.2: Improved cum_opacity calculation
+            // cum_opacity += alpha;
             cum_opacity += (alpha + 0.1 * G);
             
             // DISABLED: Improvement 2.5: Depth-Alpha joint optimization
@@ -541,6 +562,14 @@ renderCUDA(
 			// Eq. (3) from 3D Gaussian splatting paper.
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * w;
+
+			// DISABLED: Improvement 2.2.2: Weighted depth convergence loss (use alpha weight)
+			// float depth_diff = fabsf(depth - last_depth);
+			// if (depth_diff <= ConvergeThreshold) {
+			//     float alpha_weight = (alpha + last_alpha) * 0.5f;
+			//     Converge += alpha_weight * fminf(G, last_G) * depth_diff * depth_diff;
+			// }
+			// last_alpha = alpha;
 
 			// Converge Loss - Original adjacent constraint
 			if((T > 0.09f)) {

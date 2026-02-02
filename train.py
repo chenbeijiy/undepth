@@ -75,8 +75,11 @@ def training(dataset: ModelParams,
     ema_converge_local_for_log = 0.0
     ema_converge_global_for_log = 0.0
     ema_converge_cross_for_log = 0.0
-    # Innovation 3: Adaptive Alpha Enhancement
-    ema_alpha_enhance_for_log = 0.0
+    # DISABLED: All improvements and innovations
+    # ema_alpha_enhance_for_log = 0.0
+    # ema_spatial_depth_for_log = 0.0
+    # ema_depth_normal_for_log = 0.0
+    # ema_spatial_smooth_for_log = 0.0
 
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
@@ -149,22 +152,63 @@ def training(dataset: ModelParams,
         # valid_surface_mask = (converge_ray < 0.1).float()
         # alpha_completeness_loss = lambda_alpha_completeness * ((1.0 - rend_alpha) ** 2 * valid_surface_mask).mean()
 
-        # Innovation 3: Adaptive Alpha Enhancement
+        # DISABLED: Innovation 3: Adaptive Alpha Enhancement
         alpha_enhance_loss = torch.tensor(0.0, device="cuda")
-        if opt.adaptive_alpha_enhance_enabled:
-            lambda_alpha_enhance = opt.lambda_alpha_enhance if iteration > opt.alpha_enhance_from_iter else 0.0
-            if lambda_alpha_enhance > 0:
-                from utils.alpha_enhancement import adaptive_alpha_enhancement_loss
-                rend_alpha = render_pkg['rend_alpha']
-                surf_depth = render_pkg['surf_depth']
-                alpha_enhance_loss = adaptive_alpha_enhancement_loss(
-                    rend_alpha=rend_alpha,
-                    surf_depth=surf_depth,
-                    lambda_enhance=lambda_alpha_enhance,
-                    depth_var_scale=opt.alpha_enhance_depth_var_scale
-                )
+        # if opt.adaptive_alpha_enhance_enabled:
+        #     lambda_alpha_enhance = opt.lambda_alpha_enhance if iteration > opt.alpha_enhance_from_iter else 0.0
+        #     if lambda_alpha_enhance > 0:
+        #         from utils.alpha_enhancement import adaptive_alpha_enhancement_loss
+        #         rend_alpha = render_pkg['rend_alpha']
+        #         surf_depth = render_pkg['surf_depth']
+        #         alpha_enhance_loss = adaptive_alpha_enhancement_loss(
+        #             rend_alpha=rend_alpha,
+        #             surf_depth=surf_depth,
+        #             lambda_enhance=lambda_alpha_enhance,
+        #             depth_var_scale=opt.alpha_enhance_depth_var_scale
+        #         )
 
-        total_loss = loss + dist_loss + normal_loss + converge_enhanced + alpha_enhance_loss
+        # DISABLED: Innovation 1: Spatial-Depth Coherence Loss
+        spatial_depth_loss = torch.tensor(0.0, device="cuda")
+        # if opt.spatial_depth_coherence_enabled:
+        #     lambda_spatial = opt.lambda_spatial_depth if iteration > opt.spatial_depth_from_iter else 0.0
+        #     if lambda_spatial > 0:
+        #         from utils.spatial_depth_coherence import spatial_depth_coherence_loss
+        #         surf_depth = render_pkg['surf_depth']
+        #         rendered_rgb = render_pkg['render']  # (3, H, W)
+        #         spatial_depth_loss = spatial_depth_coherence_loss(
+        #             surf_depth=surf_depth,
+        #             rgb=rendered_rgb,
+        #             lambda_spatial=opt.spatial_depth_rgb_weight,
+        #             kernel_size=opt.spatial_depth_kernel_size
+        #         ) * lambda_spatial
+
+        # DISABLED: Innovation 4: Depth-Normal Joint Optimization
+        depth_normal_loss = torch.tensor(0.0, device="cuda")
+        # if opt.depth_normal_consistency_enabled:
+        #     lambda_dn = opt.lambda_depth_normal if iteration > opt.depth_normal_from_iter else 0.0
+        #     if lambda_dn > 0:
+        #         from utils.depth_normal_consistency import depth_normal_consistency_loss
+        #         surf_depth = render_pkg['surf_depth']
+        #         surf_normal = render_pkg['surf_normal']
+        #         depth_normal_loss = depth_normal_consistency_loss(
+        #             surf_depth=surf_depth,
+        #             surf_normal=surf_normal,
+        #             lambda_dn=lambda_dn
+        #         )
+
+        # DISABLED: Improvement 2.3: Spatial Depth Smoothness Loss
+        spatial_smooth_loss = torch.tensor(0.0, device="cuda")
+        # if opt.spatial_depth_smoothness_enabled:
+        #     lambda_smooth = opt.lambda_spatial_smooth if iteration > opt.spatial_smooth_from_iter else 0.0
+        #     if lambda_smooth > 0:
+        #         from utils.spatial_depth_smoothness import spatial_depth_smoothness_loss
+        #         surf_depth = render_pkg['surf_depth']
+        #         spatial_smooth_loss = spatial_depth_smoothness_loss(
+        #             surf_depth=surf_depth,
+        #             lambda_smooth=lambda_smooth
+        #         )
+
+        total_loss = loss + dist_loss + normal_loss + converge_enhanced
         
         total_loss.backward()
 
@@ -179,7 +223,11 @@ def training(dataset: ModelParams,
             # ema_converge_global_for_log = 0.4 * converge_global_loss.item() + 0.6 * ema_converge_global_for_log
             # ema_converge_cross_for_log = 0.4 * converge_cross_loss.item() + 0.6 * ema_converge_cross_for_log
             # ema_alpha_completeness_for_log = 0.4 * alpha_completeness_loss.item() + 0.6 * ema_alpha_completeness_for_log
-            ema_alpha_enhance_for_log = 0.4 * alpha_enhance_loss.item() + 0.6 * ema_alpha_enhance_for_log
+            # DISABLED: All improvements and innovations
+            # ema_alpha_enhance_for_log = 0.4 * alpha_enhance_loss.item() + 0.6 * ema_alpha_enhance_for_log
+            # ema_spatial_depth_for_log = 0.4 * spatial_depth_loss.item() + 0.6 * ema_spatial_depth_for_log
+            # ema_depth_normal_for_log = 0.4 * depth_normal_loss.item() + 0.6 * ema_depth_normal_for_log
+            # ema_spatial_smooth_for_log = 0.4 * spatial_smooth_loss.item() + 0.6 * ema_spatial_smooth_for_log
 
             if iteration % 10 == 0:
                 loss_dict = {
@@ -187,11 +235,13 @@ def training(dataset: ModelParams,
                     # "distort": f"{ema_dist_for_log:.{5}f}",
                     "normal": f"{ema_normal_for_log:.{5}f}",
                     "converge": f"{ema_converge_for_log:.{5}f}",
-                    "conv_loc": f"{ema_converge_local_for_log:.{5}f}",  # Improvement 3.3: Local
-                    "conv_glob": f"{ema_converge_global_for_log:.{5}f}",  # Improvement 3.3: Global
-                    "conv_cross": f"{ema_converge_cross_for_log:.{5}f}",  # Improvement 3.3: Cross
-                    "alpha_comp": f"{ema_alpha_completeness_for_log:.{5}f}",  # Improvement 3.3: Alpha completeness
-                    "alpha_enh": f"{ema_alpha_enhance_for_log:.{5}f}",  # Innovation 3: Adaptive Alpha Enhancement
+                    # "conv_loc": f"{ema_converge_local_for_log:.{5}f}",  # Improvement 3.3: Local
+                    # "conv_glob": f"{ema_converge_global_for_log:.{5}f}",  # Improvement 3.3: Global
+                    # "conv_cross": f"{ema_converge_cross_for_log:.{5}f}",  # Improvement 3.3: Cross
+                    # "alpha_comp": f"{ema_alpha_completeness_for_log:.{5}f}",  # Improvement 3.3: Alpha completeness
+                    # "alpha_enh": f"{ema_alpha_enhance_for_log:.{5}f}",  # Innovation 3: Adaptive Alpha Enhancement
+                    # "spat_depth": f"{ema_spatial_depth_for_log:.{5}f}",  # Innovation 1: Spatial-Depth Coherence
+                    # "depth_norm": f"{ema_depth_normal_for_log:.{5}f}",  # Innovation 4: Depth-Normal Consistency
                     "Points": f"{len(gaussians.get_xyz)}"  
                 }
                 progress_bar.set_postfix(loss_dict)
