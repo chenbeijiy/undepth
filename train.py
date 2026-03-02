@@ -208,7 +208,29 @@ def training(dataset: ModelParams,
         #             lambda_smooth=lambda_smooth
         #         )
 
-        total_loss = loss + dist_loss + normal_loss + converge_enhanced
+        # Innovation 2: Multi-View Depth Consistency Loss
+        multiview_depth_loss = torch.tensor(0.0, device="cuda")
+        if opt.multiview_depth_consistency_enabled:
+            lambda_multiview = opt.lambda_multiview_depth if iteration > opt.multiview_depth_from_iter else 0.0
+            # 只在指定间隔计算多视角损失（减少计算开销）
+            if lambda_multiview > 0 and iteration % opt.multiview_interval == 0:
+                from utils.multiview_depth_consistency import multiview_depth_consistency_loss
+                # 获取训练视角列表
+                train_cameras = scene.getTrainCameras()
+                if len(train_cameras) >= 2:
+                    multiview_depth_loss = multiview_depth_consistency_loss(
+                        gaussians=gaussians,
+                        render_func=render,
+                        viewpoint_stack=train_cameras,
+                        pipe=pipe,
+                        background=background,
+                        lambda_multiview=lambda_multiview,
+                        n_views=opt.multiview_n_views,
+                        sample_random=True,
+                        return_details=False
+                    )
+
+        total_loss = loss + dist_loss + normal_loss + converge_enhanced + multiview_depth_loss
         
         total_loss.backward()
 
@@ -223,6 +245,8 @@ def training(dataset: ModelParams,
             # ema_converge_global_for_log = 0.4 * converge_global_loss.item() + 0.6 * ema_converge_global_for_log
             # ema_converge_cross_for_log = 0.4 * converge_cross_loss.item() + 0.6 * ema_converge_cross_for_log
             # ema_alpha_completeness_for_log = 0.4 * alpha_completeness_loss.item() + 0.6 * ema_alpha_completeness_for_log
+            # Innovation 2: Multi-View Depth Consistency Loss
+            ema_multiview_depth_for_log = 0.4 * multiview_depth_loss.item() + 0.6 * ema_multiview_depth_for_log
             # DISABLED: All improvements and innovations
             # ema_alpha_enhance_for_log = 0.4 * alpha_enhance_loss.item() + 0.6 * ema_alpha_enhance_for_log
             # ema_spatial_depth_for_log = 0.4 * spatial_depth_loss.item() + 0.6 * ema_spatial_depth_for_log
@@ -239,6 +263,7 @@ def training(dataset: ModelParams,
                     # "conv_glob": f"{ema_converge_global_for_log:.{5}f}",  # Improvement 3.3: Global
                     # "conv_cross": f"{ema_converge_cross_for_log:.{5}f}",  # Improvement 3.3: Cross
                     # "alpha_comp": f"{ema_alpha_completeness_for_log:.{5}f}",  # Improvement 3.3: Alpha completeness
+                    "multiview": f"{ema_multiview_depth_for_log:.{5}f}",  # Innovation 2: Multi-View Depth Consistency
                     # "alpha_enh": f"{ema_alpha_enhance_for_log:.{5}f}",  # Innovation 3: Adaptive Alpha Enhancement
                     # "spat_depth": f"{ema_spatial_depth_for_log:.{5}f}",  # Innovation 1: Spatial-Depth Coherence
                     # "depth_norm": f"{ema_depth_normal_for_log:.{5}f}",  # Innovation 4: Depth-Normal Consistency
