@@ -12,6 +12,7 @@
 import os
 import sys
 from random import randint
+import random
 import time
 from datetime import timedelta
 
@@ -70,6 +71,7 @@ def training(dataset: ModelParams,
     ema_converge_for_log = 0.0
     ema_converge_local_for_log = 0.0
     ema_view_for_log = 0.0
+    ema_reflection_for_log = 0.0
 
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
@@ -126,6 +128,41 @@ def training(dataset: ModelParams,
         else:
             view_loss = torch.tensor(0.0, device="cuda")
 
+        # Multi-view reflection consistency loss (Innovation 1)
+        # Compute every N iterations to reduce computational cost
+        lambda_reflection = opt.lambda_reflection if (iteration > 5000 and iteration % opt.reflection_consistency_interval == 0) else 0.0
+        if lambda_reflection > 0:
+            from utils.multiview_reflection_consistency import multiview_reflection_consistency_loss_simple
+            # Sample additional viewpoints for reflection consistency
+            train_cameras = scene.getTrainCameras()
+            if len(train_cameras) >= opt.num_reflection_views:
+                # Sample random viewpoints (excluding current viewpoint)
+                available_cameras = [cam for cam in train_cameras if cam.uid != viewpoint_cam.uid]
+                if len(available_cameras) >= opt.num_reflection_views - 1:
+                    sampled_cameras = random.sample(available_cameras, opt.num_reflection_views - 1)
+                    # Include current viewpoint
+                    reflection_viewpoints = [viewpoint_cam] + sampled_cameras
+                    
+                    # Render additional viewpoints
+                    reflection_render_pkgs = []
+                    for ref_viewpoint in reflection_viewpoints:
+                        ref_render_pkg = render(ref_viewpoint, gaussians, pipe, background)
+                        reflection_render_pkgs.append(ref_render_pkg)
+                    
+                    # Compute reflection consistency loss
+                    reflection_loss = lambda_reflection * multiview_reflection_consistency_loss_simple(
+                        reflection_render_pkgs,
+                        reflection_viewpoints,
+                        lambda_view_weight=opt.lambda_view_weight,
+                        mask_background=True
+                    )
+                else:
+                    reflection_loss = torch.tensor(0.0, device="cuda")
+            else:
+                reflection_loss = torch.tensor(0.0, device="cuda")
+        else:
+            reflection_loss = torch.tensor(0.0, device="cuda")
+
         rend_dist   = render_pkg["rend_dist"]  
         rend_normal = render_pkg['rend_normal']
         surf_normal = render_pkg['surf_normal']
@@ -133,7 +170,7 @@ def training(dataset: ModelParams,
         normal_loss = lambda_normal * (normal_error).mean()
         dist_loss = lambda_dist * (rend_dist).mean()
 
-        total_loss = loss + dist_loss + normal_loss + converge_enhanced + view_loss
+        total_loss = loss + dist_loss + normal_loss + converge_enhanced + view_loss + reflection_loss
         
         total_loss.backward()
 
@@ -146,6 +183,7 @@ def training(dataset: ModelParams,
             ema_converge_for_log = 0.4 * converge_enhanced.item() + 0.6 * ema_converge_for_log
             ema_converge_local_for_log = 0.4 * converge_local_loss.item() + 0.6 * ema_converge_local_for_log
             ema_view_for_log = 0.4 * view_loss.item() + 0.6 * ema_view_for_log if lambda_view > 0 else 0.0
+            ema_reflection_for_log = 0.4 * reflection_loss.item() + 0.6 * ema_reflection_for_log if lambda_reflection > 0 else ema_reflection_for_log
 
             if iteration % 10 == 0:
                 loss_dict = {
@@ -154,6 +192,7 @@ def training(dataset: ModelParams,
                     "normal": f"{ema_normal_for_log:.{5}f}",
                     "converge": f"{ema_converge_for_log:.{5}f}",
                     "view": f"{ema_view_for_log:.{5}f}" if lambda_view > 0 else "0.0",
+                    "reflection": f"{ema_reflection_for_log:.{5}f}" if lambda_reflection > 0 else "0.0",
                     "Points": f"{len(gaussians.get_xyz)}"  
                 }
                 progress_bar.set_postfix(loss_dict)
