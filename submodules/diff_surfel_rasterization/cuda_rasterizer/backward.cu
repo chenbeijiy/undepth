@@ -359,19 +359,43 @@ renderCUDA(
                 constexpr float forward_scale = 1.25; // Encourage convergence toward camera
 
                 if (front_depth >= 0.0f) {
-                    float front_grad = min(G, front_G) * 2  * (c_d - front_depth) * dL_dpixConverge;
+					// Estimate specular strength from RGB (same as forward)
+					// Note: C should be 3 for RGB channels
+					float rgb_r = collected_colors[0 * BLOCK_SIZE + j];
+					float rgb_g = collected_colors[1 * BLOCK_SIZE + j];
+					float rgb_b = collected_colors[2 * BLOCK_SIZE + j];
+					
+					// Compute RGB luminance
+					float luminance = (rgb_r + rgb_g + rgb_b) / 3.0f;
+					
+					// Compute RGB variance
+					float rgb_mean = luminance;
+					float rgb_variance = ((rgb_r - rgb_mean) * (rgb_r - rgb_mean) + 
+					                      (rgb_g - rgb_mean) * (rgb_g - rgb_mean) + 
+					                      (rgb_b - rgb_mean) * (rgb_b - rgb_mean)) / 3.0f;
+					
+					// Specular strength: high luminance + high variance
+					float specular_strength_raw = luminance * rgb_variance;
+					float specular_strength = 1.0f / (1.0f + expf(-10.0f * specular_strength_raw));
+					
+					// Reflection-aware weight (same as forward)
+					const float lambda_spec = 2.0f;
+					float reflection_weight = 1.0f + lambda_spec * specular_strength;
+					
+					// Apply reflection-aware weight to gradient
+                    float front_grad = reflection_weight * min(G, front_G) * 2.0f * (c_d - front_depth) * dL_dpixConverge;
                     if (c_d > front_depth) {
                         front_grad *= forward_scale;
                     }
-                    front_grad = abs(c_d - front_depth) > ConvergeThreshold ? 0.0 : front_grad;
+                    front_grad = abs(c_d - front_depth) > ConvergeThreshold ? 0.0f : front_grad;
                     dL_dz += front_grad;
 
                     if (contributor < final_converge - 1) {
-                        float back_grad = min(G, last_G) * 2  * (c_d - last_convergeDepth) * dL_dpixConverge;
+                        float back_grad = reflection_weight * min(G, last_G) * 2.0f * (c_d - last_convergeDepth) * dL_dpixConverge;
                         if (c_d > last_convergeDepth) {
                             back_grad *= forward_scale;
                         }
-                        back_grad = abs(c_d - last_convergeDepth) > ConvergeThreshold ? 0.0 : back_grad;
+                        back_grad = abs(c_d - last_convergeDepth) > ConvergeThreshold ? 0.0f : back_grad;
                         dL_dz += back_grad;
                     }
                 }

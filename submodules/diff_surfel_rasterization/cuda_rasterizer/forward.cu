@@ -452,23 +452,6 @@ renderCUDA(
             //     median_contributor = contributor;
             // }
 
-            // DISABLED: Improvement 2.1.1: Adaptive threshold based on depth convergence degree
-            // float convergence_degree = 1.0f;
-            // if (last_depth > 0) {
-            //     float depth_diff_relative = fabsf(depth - last_depth) / (fminf(depth, last_depth) + 1e-6f);
-            //     float immediate_convergence = 1.0f / (1.0f + depth_diff_relative * 100.0f);
-            //     convergence_degree = immediate_convergence;
-            // }
-            // float adaptive_threshold = 0.5f + 0.2f * convergence_degree;
-            // if (cum_opacity < adaptive_threshold) {
-            //     if (convergence_degree > 0.7f) {
-            //         median_depth = depth;
-            //     } else {
-            //         median_depth = last_depth > 0 ? (last_depth + depth) * 0.5 : depth;
-            //     }
-            //     median_contributor = contributor;
-            // }
-
             // Cumulated opacity. Eq. (9) from paper Unbiased 2DGS.
             if (cum_opacity < 0.6f) {
                 // Make the depth map smoother
@@ -477,82 +460,6 @@ renderCUDA(
             }
             cum_opacity += (alpha + 0.1 * G);
             
-            // DISABLED: Improvement 2.5: Depth-Alpha joint optimization
-            // Accumulate weighted depth for computing mean depth
-            // weighted_depth_sum += depth * w;
-            // weight_sum += w;
-            // 
-            // // Compute current mean depth (incremental)
-            // if (weight_sum > 1e-8f) {
-            //     ray_mean_depth = weighted_depth_sum / weight_sum;
-            //     
-            //     // Compute depth-alpha cross term: w * |depth - mean_depth| * (1 - alpha)
-            //     // This penalizes Gaussians that are far from mean depth AND have low alpha
-            //     float depth_diff = fabsf(depth - ray_mean_depth);
-            //     depth_alpha_cross += w * depth_diff * (1.0f - alpha);
-            // }
-            
-            // DISABLED: Improvement 2.7: Compute depth variance for adaptive densification
-            // Accumulate weighted depth statistics for variance calculation
-            // depth_weight_sum += w;
-            // if (depth_weight_sum > 1e-8f) {
-            //     float old_mean = depth_mean;
-            //     depth_mean = (depth_mean * (depth_weight_sum - w) + depth * w) / depth_weight_sum;
-            //     // Incremental variance calculation: Var = E[X²] - E[X]²
-            //     // Update E[X²] incrementally
-            //     depth_squared_sum += depth * depth * w;
-            //     // Compute variance: Var = (E[X²] - E[X]²) / sum(w)
-            //     depth_variance = (depth_squared_sum / depth_weight_sum) - (depth_mean * depth_mean);
-            //     // Ensure non-negative variance
-            //     if (depth_variance < 0.0f) depth_variance = 0.0f;
-            // }
-            
-            // DISABLED: Improvement 3.3: Multi-loss joint optimization
-            // Compute both global convergence (2.1) and depth-alpha cross term (2.5) for converge_enhanced
-            
-            // DISABLED: Improvement 2.1: Global depth convergence loss
-            // Accumulate weighted depth and weights, and compute incremental loss
-            // float old_weight_sum = weight_sum;
-            // weighted_depth_sum += depth * w;
-            // weight_sum += w;
-            // 
-            // if (weight_sum > 1e-8f) {
-            //     // Update mean depth
-            //     float old_mean = (old_weight_sum > 1e-8f) ? (weighted_depth_sum - depth * w) / old_weight_sum : 0.0f;
-            //     ray_mean_depth = weighted_depth_sum / weight_sum;
-            //     
-            //     // Compute incremental contribution to global convergence loss
-            //     // For current Gaussian: w * (depth - mean)^2
-            //     float depth_diff = depth - ray_mean_depth;
-            //     converge_ray += w * depth_diff * depth_diff;
-            //     
-            //     // Improvement 2.5: Depth-Alpha cross term
-            //     // Compute depth-alpha cross term: w * |depth - mean_depth| * (1 - alpha)
-            //     // This penalizes Gaussians that are far from mean depth AND have low alpha
-            //     float depth_diff_abs = fabsf(depth - ray_mean_depth);
-            //     depth_alpha_cross += w * depth_diff_abs * (1.0f - alpha);
-            // }
-            
-            // DISABLED: Improvement 2.2: Adaptive threshold based on convergence degree
-            // depth_weight_sum += w;
-            // if (depth_weight_sum > 1e-8f) {
-            //     float old_mean = depth_mean;
-            //     depth_mean = (depth_mean * (depth_weight_sum - w) + depth * w) / depth_weight_sum;
-            //     depth_variance = depth_variance * ((depth_weight_sum - w) / depth_weight_sum) + 
-            //                     (depth - old_mean) * (depth - depth_mean) * (w / depth_weight_sum);
-            // }
-            
-            // DISABLED: Improvement 2.3: Alpha concentration
-            // if (alpha > alpha_threshold) {
-            //     alpha_concentration_weight_sum += w;
-            //     if (alpha_concentration_weight_sum > 1e-8f) {
-            //         float old_alpha_mean = alpha_concentration_mean;
-            //         alpha_concentration_mean = (alpha_concentration_mean * (alpha_concentration_weight_sum - w) + depth * w) / alpha_concentration_weight_sum;
-            //         alpha_concentration = alpha_concentration * ((alpha_concentration_weight_sum - w) / alpha_concentration_weight_sum) + 
-            //                              (depth - old_alpha_mean) * (depth - alpha_concentration_mean) * (w / alpha_concentration_weight_sum);
-            //     }
-            // } 
-
 			// Render normal map
 			for (int ch=0; ch<3; ch++) N[ch] += normal[ch] * w;
 #endif
@@ -561,19 +468,39 @@ renderCUDA(
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * w;
 
-			// DISABLED: Improvement 2.2.2: Weighted depth convergence loss (use alpha weight)
-			// float depth_diff = fabsf(depth - last_depth);
-			// if (depth_diff <= ConvergeThreshold) {
-			//     float alpha_weight = (alpha + last_alpha) * 0.5f;
-			//     Converge += alpha_weight * fminf(G, last_G) * depth_diff * depth_diff;
-			// }
-			// last_alpha = alpha;
-
-			// Converge Loss - Original adjacent constraint
+			// Converge Loss - Reflection-Aware adjacent constraint (Innovation 2)
 			if((T > 0.09f)) {
 				if(last_converge > 0) {
-                    Converge += abs(depth - last_depth) > ConvergeThreshold ?
-                        0 : min(G, last_G) * (depth - last_depth) * (depth - last_depth);
+					// Estimate specular strength from RGB
+					float rgb_r = features[collected_id[j] * CHANNELS + 0];
+					float rgb_g = features[collected_id[j] * CHANNELS + 1];
+					float rgb_b = features[collected_id[j] * CHANNELS + 2];
+					
+					// Compute RGB luminance
+					float luminance = (rgb_r + rgb_g + rgb_b) / 3.0f;
+					
+					// Compute RGB variance
+					float rgb_mean = luminance;
+					float rgb_variance = ((rgb_r - rgb_mean) * (rgb_r - rgb_mean) + 
+					                      (rgb_g - rgb_mean) * (rgb_g - rgb_mean) + 
+					                      (rgb_b - rgb_mean) * (rgb_b - rgb_mean)) / 3.0f;
+					
+					// Specular strength: high luminance + high variance (highlights)
+					float specular_strength_raw = luminance * rgb_variance;
+					
+					// Normalize to [0,1] using sigmoid
+					float specular_strength = 1.0f / (1.0f + expf(-10.0f * specular_strength_raw));
+					
+					// Reflection-aware weight: stronger constraint for specular regions
+					const float lambda_spec = 2.0f;  // Configurable parameter
+					float reflection_weight = 1.0f + lambda_spec * specular_strength;
+					
+					// Apply reflection-aware weight to convergence loss
+					float depth_diff = abs(depth - last_depth);
+					if(depth_diff <= ConvergeThreshold) {
+						float depth_diff_sq = (depth - last_depth) * (depth - last_depth);
+						Converge += reflection_weight * min(G, last_G) * depth_diff_sq;
+					}
 				}
                 last_G = G;
                 last_converge = contributor;

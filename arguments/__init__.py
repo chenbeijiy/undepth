@@ -50,7 +50,7 @@ class ModelParams(ParamGroup):
         self._source_path = ""
         self._model_path = ""
         self._images = "images"
-        self.gamma = 1.0
+        self.gamma = 0.5
         self._resolution = -1
         self._white_background = False
         self.data_device = "cuda"
@@ -86,6 +86,7 @@ class OptimizationParams(ParamGroup):
         self.lambda_dist = 0.0
         self.lambda_normal = 0.05
         self.lambda_converge_local = 7.0  # Local convergence loss (original adjacent constraint)
+        self.opacity_cull = 0.05
 
         # Keep for backward compatibility
         self.lambda_converge = self.lambda_converge_local
