@@ -88,7 +88,7 @@ class OptimizationParams(ParamGroup):
         self.lambda_converge_local = 7.0  # Local convergence loss (original adjacent constraint)
         self.lambda_view = 0.05  # View-dependent depth constraint loss (Innovation 3)
         self.lambda_view_weight = 2.0  # Weight parameter for view-dependent constraint
-        self.lambda_reflection = 0.1  # Multi-view reflection consistency loss (Innovation 1)
+        self.lambda_reflection = 0  # Multi-view reflection consistency loss (Innovation 1)
         self.reflection_consistency_interval = 50  # Compute reflection consistency every N iterations
         self.num_reflection_views = 2  # Number of views to sample for reflection consistency
         self.opacity_cull = 0.05

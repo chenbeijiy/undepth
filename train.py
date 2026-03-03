@@ -170,7 +170,7 @@ def training(dataset: ModelParams,
         normal_loss = lambda_normal * (normal_error).mean()
         dist_loss = lambda_dist * (rend_dist).mean()
 
-        total_loss = loss + dist_loss + normal_loss + converge_enhanced + view_loss + reflection_loss
+        total_loss = loss + dist_loss + normal_loss + converge_enhanced + view_loss
         
         total_loss.backward()
 
