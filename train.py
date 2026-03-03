@@ -69,6 +69,7 @@ def training(dataset: ModelParams,
     ema_normal_for_log = 0.0
     ema_converge_for_log = 0.0
     ema_converge_local_for_log = 0.0
+    ema_view_for_log = 0.0
 
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
@@ -113,6 +114,18 @@ def training(dataset: ModelParams,
         # Combined enhanced convergence loss
         converge_enhanced = converge_local_loss
 
+        # View-dependent depth constraint loss (Innovation 3)
+        lambda_view = opt.lambda_view if iteration > 5000 else 0.0
+        if lambda_view > 0:
+            from utils.view_dependent_depth_constraint import view_dependent_depth_constraint_loss
+            view_loss = lambda_view * view_dependent_depth_constraint_loss(
+                render_pkg, viewpoint_cam, 
+                lambda_view_weight=opt.lambda_view_weight,
+                mask_background=True
+            )
+        else:
+            view_loss = torch.tensor(0.0, device="cuda")
+
         rend_dist   = render_pkg["rend_dist"]  
         rend_normal = render_pkg['rend_normal']
         surf_normal = render_pkg['surf_normal']
@@ -120,7 +133,7 @@ def training(dataset: ModelParams,
         normal_loss = lambda_normal * (normal_error).mean()
         dist_loss = lambda_dist * (rend_dist).mean()
 
-        total_loss = loss + dist_loss + normal_loss + converge_enhanced
+        total_loss = loss + dist_loss + normal_loss + converge_enhanced + view_loss
         
         total_loss.backward()
 
@@ -132,6 +145,7 @@ def training(dataset: ModelParams,
             ema_normal_for_log = 0.4 * normal_loss.item() + 0.6 * ema_normal_for_log
             ema_converge_for_log = 0.4 * converge_enhanced.item() + 0.6 * ema_converge_for_log
             ema_converge_local_for_log = 0.4 * converge_local_loss.item() + 0.6 * ema_converge_local_for_log
+            ema_view_for_log = 0.4 * view_loss.item() + 0.6 * ema_view_for_log if lambda_view > 0 else 0.0
 
             if iteration % 10 == 0:
                 loss_dict = {
@@ -139,6 +153,7 @@ def training(dataset: ModelParams,
                     # "distort": f"{ema_dist_for_log:.{5}f}",
                     "normal": f"{ema_normal_for_log:.{5}f}",
                     "converge": f"{ema_converge_for_log:.{5}f}",
+                    "view": f"{ema_view_for_log:.{5}f}" if lambda_view > 0 else "0.0",
                     "Points": f"{len(gaussians.get_xyz)}"  
                 }
                 progress_bar.set_postfix(loss_dict)

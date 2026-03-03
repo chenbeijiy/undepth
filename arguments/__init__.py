@@ -86,6 +86,8 @@ class OptimizationParams(ParamGroup):
         self.lambda_dist = 0.0
         self.lambda_normal = 0.05
         self.lambda_converge_local = 7.0  # Local convergence loss (original adjacent constraint)
+        self.lambda_view = 0.05  # View-dependent depth constraint loss (Innovation 3)
+        self.lambda_view_weight = 2.0  # Weight parameter for view-dependent constraint
         self.opacity_cull = 0.05
 
         # Keep for backward compatibility
