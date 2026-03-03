@@ -85,54 +85,11 @@ class OptimizationParams(ParamGroup):
         self.lambda_dssim = 0.2
         self.lambda_dist = 0.0
         self.lambda_normal = 0.05
-        # Improvement 3.3: Multi-loss joint optimization
-        # L_converge_enhanced = λ1 * L_converge_local + λ2 * L_converge_global + λ3 * L_cross
         self.lambda_converge_local = 7.0  # Local convergence loss (original adjacent constraint)
-        # self.lambda_converge_global = 2.0  # Global convergence loss (Improvement 2.1)
-        # self.lambda_converge_cross = 1.0  # Depth-Alpha cross term (Improvement 2.5)
-        
+
         # Keep for backward compatibility
         self.lambda_converge = self.lambda_converge_local
         
-        # Improvement 3.3: Multi-loss joint optimization parameters
-        self.multiview_depth_consistency_enabled = False  # Enable multi-view depth consistency loss
-        self.lambda_multiview_depth = 0.05  # Multi-view depth consistency loss weight
-        self.multiview_depth_from_iter = 5000  # Start iteration for multi-view depth consistency
-        self.multiview_n_views = 3  # Number of views to sample for multi-view consistency (2-3 recommended)
-        self.multiview_interval = 100  # Compute multi-view loss every N iterations (to reduce computation)
-        # self.lambda_alpha_completeness = 0.1  # Alpha completeness loss weight
-        self.opacity_cull = 0.05
-        
-        #  Innovation 6: Adaptive Densification for Holes
-        self.adaptive_densify_enabled = False # Enable adaptive densification for holes
-        self.adaptive_densify_depth_var_threshold = 0.01  # Depth variance threshold for hole detection
-        self.adaptive_densify_alpha_threshold = 0.5  # Alpha threshold for hole detection
-        self.adaptive_densify_max_gaussians = 1000  # Maximum number of Gaussians to add per iteration
-        self.adaptive_densify_interval = 500  # Interval for adaptive densification (iterations)
-        
-        # Innovation 3: Adaptive Alpha Enhancement
-        self.adaptive_alpha_enhance_enabled = False  # Enable adaptive alpha enhancement
-        self.lambda_alpha_enhance = 0.2  # Alpha enhancement loss weight
-        self.alpha_enhance_from_iter = 5000  # Start iteration for alpha enhancement
-        self.alpha_enhance_depth_var_scale = 10.0  # Depth variance scale factor for hole detection sensitivity
-        
-        # Innovation 1: Spatial-Depth Coherence Loss
-        self.spatial_depth_coherence_enabled = False  # Enable spatial-depth coherence loss (default: enabled)
-        self.lambda_spatial_depth = 0.1  # Spatial-depth coherence loss weight
-        self.spatial_depth_from_iter = 0  # Start iteration for spatial-depth coherence (0 = from start)
-        self.spatial_depth_rgb_weight = 0.1  # RGB similarity weight coefficient (lambda in exp(-lambda * ||I - I'||^2))
-        self.spatial_depth_kernel_size = 3  # Neighborhood kernel size (3 or 5)
-        
-        # Innovation 4: Depth-Normal Joint Optimization
-        self.depth_normal_consistency_enabled = False  # Enable depth-normal consistency loss (default: enabled)
-        self.lambda_depth_normal = 0.1  # Depth-normal consistency loss weight
-        self.depth_normal_from_iter = 0  # Start iteration for depth-normal consistency (0 = from start)
-        
-        # Improvement 2.3: Spatial Depth Smoothness Loss
-        self.spatial_depth_smoothness_enabled = False  # Enable spatial depth smoothness loss (default: enabled)
-        self.lambda_spatial_smooth = 0.1  # Spatial depth smoothness loss weight
-        self.spatial_smooth_from_iter = 0  # Start iteration for spatial smoothness (0 = from start)
-
         self.densification_interval = 100
         self.opacity_reset_interval = 3000
         self.densify_from_iter      = 500

@@ -475,8 +475,6 @@ renderCUDA(
                 median_depth = last_depth > 0 ? (last_depth + depth) * 0.5 : depth;
                 median_contributor = contributor;
             }
-            // DISABLED: Improvement 2.1.2: Improved cum_opacity calculation
-            // cum_opacity += alpha;
             cum_opacity += (alpha + 0.1 * G);
             
             // DISABLED: Improvement 2.5: Depth-Alpha joint optimization
