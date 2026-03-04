@@ -379,8 +379,11 @@ renderCUDA(
 					float specular_strength = 1.0f / (1.0f + expf(-10.0f * specular_strength_raw));
 					
 					// Reflection-aware weight (same as forward)
-					const float lambda_spec = 2.0f;
+					// 降低反射权重的影响，提高稳定性（与forward.cu保持一致）
+					const float lambda_spec = 1.0f;  // Reduced from 2.0f to 1.0f for better stability
 					float reflection_weight = 1.0f + lambda_spec * specular_strength;
+					// 限制权重范围，避免异常值（与forward.cu保持一致）
+					reflection_weight = fminf(fmaxf(reflection_weight, 1.0f), 2.5f);  // Clamp to [1.0, 2.5]
 					
 					// Apply reflection-aware weight to gradient
                     float front_grad = reflection_weight * min(G, front_G) * 2.0f * (c_d - front_depth) * dL_dpixConverge;

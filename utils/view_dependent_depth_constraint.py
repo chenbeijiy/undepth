@@ -113,15 +113,36 @@ def compute_view_normal_angle(view_dirs, normals):
     return cos_theta
 
 
-def compute_depth_gradient(depth):
+def huber_loss(x, delta=0.1):
     """
-    计算深度梯度 ||∇d||²（添加数值稳定性处理）
+    Huber损失：对小误差使用L2，对大误差使用L1，更平滑且更稳定
+    
+    Args:
+        x: 输入tensor
+        delta: Huber损失的阈值（默认0.1）
+    
+    Returns:
+        huber_loss: Huber损失值
+    """
+    abs_x = torch.abs(x)
+    return torch.where(
+        abs_x < delta,
+        0.5 * x ** 2 / delta,
+        abs_x - 0.5 * delta
+    )
+
+
+def compute_depth_gradient(depth, use_smooth_loss=True, delta=0.1):
+    """
+    计算深度梯度 ||∇d||²（添加数值稳定性处理，支持Huber损失）
     
     Args:
         depth: [1, H, W] 或 [H, W] 深度图
+        use_smooth_loss: 是否使用Huber损失（默认True，更稳定）
+        delta: Huber损失的阈值（默认0.1）
     
     Returns:
-        depth_grad_sq: [H, W] 深度梯度的平方和
+        depth_grad_sq: [H, W] 深度梯度的平方和（或Huber损失）
     """
     # 确保深度图的形状是 [1, H, W]
     if depth.dim() == 2:
@@ -133,17 +154,25 @@ def compute_depth_gradient(depth):
     grad_x = depth[:, :, 1:] - depth[:, :, :-1]  # [1, H, W-1]
     grad_y = depth[:, 1:, :] - depth[:, :-1, :]  # [1, H-1, W]
     
-    # 添加梯度裁剪，避免异常值导致数值不稳定
-    grad_x = torch.clamp(grad_x, -10.0, 10.0)
-    grad_y = torch.clamp(grad_y, -10.0, 10.0)
+    # 添加梯度裁剪，避免异常值导致数值不稳定（更激进的裁剪）
+    grad_x = torch.clamp(grad_x, -5.0, 5.0)  # 从10.0降低到5.0
+    grad_y = torch.clamp(grad_y, -5.0, 5.0)  # 从10.0降低到5.0
     
     # 填充边界（使用零填充）
     grad_x = F.pad(grad_x, (0, 1, 0, 0), mode='constant', value=0.0)  # [1, H, W]
     grad_y = F.pad(grad_y, (0, 0, 0, 1), mode='constant', value=0.0)  # [1, H, W]
     
-    # 计算梯度平方和（添加上限，避免异常值）
-    depth_grad_sq = grad_x.squeeze(0) ** 2 + grad_y.squeeze(0) ** 2  # [H, W]
-    depth_grad_sq = torch.clamp(depth_grad_sq, 0.0, 100.0)  # 限制最大值，避免异常值
+    if use_smooth_loss:
+        # 使用Huber损失：更平滑且更稳定
+        grad_x_huber = huber_loss(grad_x.squeeze(0), delta)  # [H, W]
+        grad_y_huber = huber_loss(grad_y.squeeze(0), delta)  # [H, W]
+        depth_grad_sq = grad_x_huber + grad_y_huber  # [H, W]
+        # Huber损失已经平滑，不需要额外的上限
+        depth_grad_sq = torch.clamp(depth_grad_sq, 0.0, 10.0)  # 更小的上限
+    else:
+        # 使用原始L2损失
+        depth_grad_sq = grad_x.squeeze(0) ** 2 + grad_y.squeeze(0) ** 2  # [H, W]
+        depth_grad_sq = torch.clamp(depth_grad_sq, 0.0, 25.0)  # 更小的上限
     
     return depth_grad_sq
 
@@ -191,8 +220,8 @@ def view_dependent_depth_constraint_loss(
     # 添加数值稳定性处理：限制权重范围，避免异常值
     view_weight = torch.clamp(view_weight, 0.01, 10.0)  # 限制权重在合理范围内
     
-    # 4. 计算深度梯度
-    depth_grad_sq = compute_depth_gradient(surf_depth)  # [H, W]
+    # 4. 计算深度梯度（使用Huber损失以提高稳定性）
+    depth_grad_sq = compute_depth_gradient(surf_depth, use_smooth_loss=True, delta=0.1)  # [H, W]
     
     # 5. 应用视角依赖权重
     weighted_depth_grad = view_weight * depth_grad_sq  # [H, W]

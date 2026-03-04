@@ -492,8 +492,11 @@ renderCUDA(
 					float specular_strength = 1.0f / (1.0f + expf(-10.0f * specular_strength_raw));
 					
 					// Reflection-aware weight: stronger constraint for specular regions
-					const float lambda_spec = 2.0f;  // Configurable parameter
+					// 降低反射权重的影响，提高稳定性
+					const float lambda_spec = 1.0f;  // Reduced from 2.0f to 1.0f for better stability
 					float reflection_weight = 1.0f + lambda_spec * specular_strength;
+					// 限制权重范围，避免异常值
+					reflection_weight = fminf(fmaxf(reflection_weight, 1.0f), 2.5f);  // Clamp to [1.0, 2.5]
 					
 					// Apply reflection-aware weight to convergence loss
 					float depth_diff = abs(depth - last_depth);

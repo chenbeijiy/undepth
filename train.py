@@ -110,10 +110,11 @@ def training(dataset: ModelParams,
 
         # Local convergence loss (original adjacent constraint)
         # 添加权重调度：逐渐增加权重，避免突然启用导致不稳定
-        lambda_converge_local = opt.lambda_converge_local if iteration > 10000 else 0.00
+        # 延迟启用时间：从10000步延迟到15000步，给模型更多时间稳定
+        lambda_converge_local = opt.lambda_converge_local if iteration > 15000 else 0.00
         if lambda_converge_local > 0:
-            # 权重调度：在10000-15000步之间逐渐增加权重
-            weight_schedule_converge = min(1.0, (iteration - 10000) / 5000.0)
+            # 权重调度：在15000-20000步之间逐渐增加权重（更平滑的调度）
+            weight_schedule_converge = min(1.0, (iteration - 15000) / 5000.0)
             lambda_converge_scheduled = lambda_converge_local * weight_schedule_converge
             converge_local_loss = lambda_converge_scheduled * converge.mean()
         else:
@@ -124,10 +125,11 @@ def training(dataset: ModelParams,
 
         # View-dependent depth constraint loss (Innovation 3)
         # 添加权重调度：逐渐增加权重，避免突然启用导致不稳定
-        lambda_view = opt.lambda_view if iteration > 5000 else 0.0
+        # 延迟启用时间：从5000步延迟到10000步，给模型更多时间稳定
+        lambda_view = opt.lambda_view if iteration > 10000 else 0.0
         if lambda_view > 0:
-            # 权重调度：在5000-10000步之间逐渐增加权重
-            weight_schedule_view = min(1.0, (iteration - 5000) / 5000.0)
+            # 权重调度：在10000-15000步之间逐渐增加权重（更平滑的调度）
+            weight_schedule_view = min(1.0, (iteration - 10000) / 5000.0)
             lambda_view_scheduled = lambda_view * weight_schedule_view
             
             from utils.view_dependent_depth_constraint import view_dependent_depth_constraint_loss

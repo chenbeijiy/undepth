@@ -10,10 +10,10 @@ if __name__ == '__main__':
     DTU_Official = "../data/dtu-2dgs"
 
     dtu_scenes = ['scan24', 'scan37', 'scan40', 'scan55', 'scan63', 'scan65', 'scan69', 'scan83', 'scan97', 'scan105', 'scan106', 'scan110', 'scan114', 'scan118', 'scan122']
-    dtu_scenes = ['scan114', 'scan118', 'scan122']
+    dtu_scenes = ['scan114'] # for quick test
 
     all_scenes = []
-    all_scenes.extend(dtu_scenes)  
+    all_scenes.extend(dtu_scenes) 
 
     python_path = sys.executable # Path to python executable
 
