@@ -331,6 +331,15 @@ renderCUDA(
     // float last_alpha = 0.0f;
     float cum_opacity = 0;
 	
+	// New convergence loss: Depth variance-based reflection-aware convergence loss
+	// Use Welford's online algorithm for computing mean and variance in single pass
+	float weighted_depth_sum = 0.0f;  // For computing mean depth
+	float weight_sum = 0.0f;  // Sum of weights
+	float weighted_depth_sq_sum = 0.0f;  // For computing variance: E[X²]
+	float ray_mean_depth = 0.0f;  // Mean depth of the ray (computed online)
+	float ray_variance = 0.0f;  // Variance of depth distribution
+	int ray_gaussian_count = 0;  // Count of Gaussians in the ray
+	
 	// DISABLED: Improvement 3.3: Multi-loss joint optimization
 	// Need both global convergence (2.1) and depth-alpha cross term (2.5) for converge_enhanced
 	
@@ -468,42 +477,79 @@ renderCUDA(
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * w;
 
-			// Converge Loss - Reflection-Aware adjacent constraint (Innovation 2)
+			// New Convergence Loss - Depth Variance-Based Reflection-Aware Convergence Loss
+			// Core idea: Constrain the consistency of the entire depth distribution (global constraint)
+			// instead of just adjacent Gaussians (local constraint like Unbiased-Depth)
 			if((T > 0.09f)) {
-				if(last_converge > 0) {
-					// Estimate specular strength from RGB
-					float rgb_r = features[collected_id[j] * CHANNELS + 0];
-					float rgb_g = features[collected_id[j] * CHANNELS + 1];
-					float rgb_b = features[collected_id[j] * CHANNELS + 2];
+				float w = alpha * T;
+				
+				// Step 1: Update online statistics for mean and variance computation
+				// Using Welford's online algorithm for efficient single-pass computation
+				weight_sum += w;
+				if (weight_sum > 1e-6f) {  // Avoid division by zero
+					// Update mean depth using weighted average
+					float delta = depth - ray_mean_depth;
+					ray_mean_depth += (w / weight_sum) * delta;
 					
-					// Compute RGB luminance
-					float luminance = (rgb_r + rgb_g + rgb_b) / 3.0f;
+					// Update variance computation
+					// For weighted variance: Var = E[X²] - E[X]²
+					weighted_depth_sum += w * depth;
+					weighted_depth_sq_sum += w * depth * depth;
 					
-					// Compute RGB variance
-					float rgb_mean = luminance;
-					float rgb_variance = ((rgb_r - rgb_mean) * (rgb_r - rgb_mean) + 
-					                      (rgb_g - rgb_mean) * (rgb_g - rgb_mean) + 
-					                      (rgb_b - rgb_mean) * (rgb_b - rgb_mean)) / 3.0f;
-					
-					// Specular strength: high luminance + high variance (highlights)
-					float specular_strength_raw = luminance * rgb_variance;
-					
-					// Normalize to [0,1] using sigmoid
-					float specular_strength = 1.0f / (1.0f + expf(-10.0f * specular_strength_raw));
-					
-					// Reflection-aware weight: stronger constraint for specular regions
-					const float lambda_spec = 2.0f;  // Configurable parameter
-					float reflection_weight = 1.0f + lambda_spec * specular_strength;
-					
-					// Apply reflection-aware weight to convergence loss
-					float depth_diff = abs(depth - last_depth);
-					if(depth_diff <= ConvergeThreshold) {
-						float depth_diff_sq = (depth - last_depth) * (depth - last_depth);
-						Converge += reflection_weight * min(G, last_G) * depth_diff_sq;
+					// Compute current variance
+					if (weight_sum > 1e-6f) {
+						float mean_depth_current = weighted_depth_sum / weight_sum;
+						ray_variance = (weighted_depth_sq_sum / weight_sum) - (mean_depth_current * mean_depth_current);
+						ray_variance = fmaxf(ray_variance, 0.0f);  // Ensure non-negative
 					}
+					ray_gaussian_count++;
 				}
-                last_G = G;
-                last_converge = contributor;
+				
+				// Step 2: Compute reflection-aware weight
+				// Estimate specular strength from RGB
+				float rgb_r = features[collected_id[j] * CHANNELS + 0];
+				float rgb_g = features[collected_id[j] * CHANNELS + 1];
+				float rgb_b = features[collected_id[j] * CHANNELS + 2];
+				
+				// Compute RGB luminance
+				float luminance = (rgb_r + rgb_g + rgb_b) / 3.0f;
+				
+				// Compute RGB variance
+				float rgb_mean = luminance;
+				float rgb_variance = ((rgb_r - rgb_mean) * (rgb_r - rgb_mean) + 
+				                      (rgb_g - rgb_mean) * (rgb_g - rgb_mean) + 
+				                      (rgb_b - rgb_mean) * (rgb_b - rgb_mean)) / 3.0f;
+				
+				// Specular strength: high luminance + high variance (highlights)
+				float specular_strength_raw = luminance * rgb_variance;
+				
+				// Normalize to [0,1] using sigmoid
+				float specular_strength = 1.0f / (1.0f + expf(-10.0f * specular_strength_raw));
+				
+				// Reflection-aware weight: stronger constraint for specular regions
+				const float lambda_spec = 2.0f;  // Configurable parameter
+				float reflection_weight = 1.0f + lambda_spec * specular_strength;
+				
+				// Step 3: Compute new convergence loss
+				// Loss = reflection_weight * w * [lambda_mean * (d - mean_d)² + lambda_var * Var(d)]
+				// This constrains the entire depth distribution, not just adjacent Gaussians
+				if (ray_gaussian_count > 1 && weight_sum > 1e-6f) {  // Need at least 2 Gaussians for variance
+					const float lambda_mean = 1.0f;  // Weight for mean term
+					const float lambda_var = 0.5f;   // Weight for variance term
+					
+					// Mean term: constraint depth to be close to mean depth
+					float mean_term = (depth - ray_mean_depth) * (depth - ray_mean_depth);
+					
+					// Variance term: constraint depth distribution to be concentrated
+					float var_term = ray_variance;
+					
+					// Combined loss with reflection-aware weight
+					Converge += reflection_weight * w * (lambda_mean * mean_term + lambda_var * var_term);
+				}
+				
+				// Keep track of last values for backward pass
+				last_G = G;
+				last_converge = contributor;
 			}
 			
 			// DISABLED: Improvement 2.1: Global depth convergence loss
