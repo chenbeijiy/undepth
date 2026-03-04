@@ -106,15 +106,16 @@ def compute_view_normal_angle(view_dirs, normals):
     # cos(θ) = -view_dir · normal（这样正面视角时cos(θ)接近1）
     cos_theta = -torch.sum(view_dirs * normals, dim=-1)  # [H, W]
     
-    # 限制在[-1, 1]范围内（避免数值误差）
-    cos_theta = torch.clamp(cos_theta, -1.0, 1.0)
+    # 限制在合理范围内（避免边界值导致exp函数不稳定）
+    # 使用[-0.99, 0.99]而不是[-1, 1]，避免exp函数在边界处不稳定
+    cos_theta = torch.clamp(cos_theta, -0.99, 0.99)
     
     return cos_theta
 
 
 def compute_depth_gradient(depth):
     """
-    计算深度梯度 ||∇d||²
+    计算深度梯度 ||∇d||²（添加数值稳定性处理）
     
     Args:
         depth: [1, H, W] 或 [H, W] 深度图
@@ -128,17 +129,21 @@ def compute_depth_gradient(depth):
     elif depth.dim() == 3 and depth.shape[0] != 1:
         raise ValueError(f"Unexpected depth shape: {depth.shape}")
     
-    # 计算深度梯度（使用Sobel算子）
-    # 使用torch的梯度计算
+    # 计算深度梯度
     grad_x = depth[:, :, 1:] - depth[:, :, :-1]  # [1, H, W-1]
     grad_y = depth[:, 1:, :] - depth[:, :-1, :]  # [1, H-1, W]
+    
+    # 添加梯度裁剪，避免异常值导致数值不稳定
+    grad_x = torch.clamp(grad_x, -10.0, 10.0)
+    grad_y = torch.clamp(grad_y, -10.0, 10.0)
     
     # 填充边界（使用零填充）
     grad_x = F.pad(grad_x, (0, 1, 0, 0), mode='constant', value=0.0)  # [1, H, W]
     grad_y = F.pad(grad_y, (0, 0, 0, 1), mode='constant', value=0.0)  # [1, H, W]
     
-    # 计算梯度平方和
+    # 计算梯度平方和（添加上限，避免异常值）
     depth_grad_sq = grad_x.squeeze(0) ** 2 + grad_y.squeeze(0) ** 2  # [H, W]
+    depth_grad_sq = torch.clamp(depth_grad_sq, 0.0, 100.0)  # 限制最大值，避免异常值
     
     return depth_grad_sq
 
@@ -182,6 +187,9 @@ def view_dependent_depth_constraint_loss(
     # 当cos(θ)接近1时（正面视角），权重接近1.0（强约束）
     # 当cos(θ)接近-1时（侧面视角），权重接近exp(-2λ)（弱约束）
     view_weight = torch.exp(-lambda_view_weight * (1.0 - cos_theta))  # [H, W]
+    
+    # 添加数值稳定性处理：限制权重范围，避免异常值
+    view_weight = torch.clamp(view_weight, 0.01, 10.0)  # 限制权重在合理范围内
     
     # 4. 计算深度梯度
     depth_grad_sq = compute_depth_gradient(surf_depth)  # [H, W]

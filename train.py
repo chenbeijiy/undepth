@@ -69,7 +69,6 @@ def training(dataset: ModelParams,
     ema_dist_for_log = 0.0
     ema_normal_for_log = 0.0
     ema_converge_for_log = 0.0
-    ema_converge_local_for_log = 0.0
     ema_view_for_log = 0.0
     ema_reflection_for_log = 0.0
 
@@ -110,17 +109,29 @@ def training(dataset: ModelParams,
         lambda_dist = opt.lambda_dist if iteration > 3000 else 0.0
 
         # Local convergence loss (original adjacent constraint)
+        # 添加权重调度：逐渐增加权重，避免突然启用导致不稳定
         lambda_converge_local = opt.lambda_converge_local if iteration > 10000 else 0.00
-        converge_local_loss = lambda_converge_local * converge.mean()
+        if lambda_converge_local > 0:
+            # 权重调度：在10000-15000步之间逐渐增加权重
+            weight_schedule_converge = min(1.0, (iteration - 10000) / 5000.0)
+            lambda_converge_scheduled = lambda_converge_local * weight_schedule_converge
+            converge_local_loss = lambda_converge_scheduled * converge.mean()
+        else:
+            converge_local_loss = torch.tensor(0.0, device="cuda")
         
         # Combined enhanced convergence loss
         converge_enhanced = converge_local_loss
 
         # View-dependent depth constraint loss (Innovation 3)
+        # 添加权重调度：逐渐增加权重，避免突然启用导致不稳定
         lambda_view = opt.lambda_view if iteration > 5000 else 0.0
         if lambda_view > 0:
+            # 权重调度：在5000-10000步之间逐渐增加权重
+            weight_schedule_view = min(1.0, (iteration - 5000) / 5000.0)
+            lambda_view_scheduled = lambda_view * weight_schedule_view
+            
             from utils.view_dependent_depth_constraint import view_dependent_depth_constraint_loss
-            view_loss = lambda_view * view_dependent_depth_constraint_loss(
+            view_loss = lambda_view_scheduled * view_dependent_depth_constraint_loss(
                 render_pkg, viewpoint_cam, 
                 lambda_view_weight=opt.lambda_view_weight,
                 mask_background=True
@@ -128,11 +139,17 @@ def training(dataset: ModelParams,
         else:
             view_loss = torch.tensor(0.0, device="cuda")
 
-        # Multi-view reflection consistency loss (Innovation 1)
+        # Multi-view reflection consistency loss (Innovation 1 - Improved)
         # Compute every N iterations to reduce computational cost
-        lambda_reflection = opt.lambda_reflection if (iteration > 5000 and iteration % opt.reflection_consistency_interval == 0) else 0.0
+        # Improved: Use simpler implementation with lower resolution and highlight masking
+        # 添加权重调度：逐渐增加权重，避免突然启用导致不稳定
+        lambda_reflection = opt.lambda_reflection if (iteration > 10000 and iteration % opt.reflection_consistency_interval == 0) else 0.0
         if lambda_reflection > 0:
-            from utils.multiview_reflection_consistency import multiview_reflection_consistency_loss_simple
+            # 权重调度：在10000-15000步之间逐渐增加权重
+            weight_schedule_reflection = min(1.0, (iteration - 10000) / 5000.0)
+            lambda_reflection_scheduled = lambda_reflection * weight_schedule_reflection
+            
+            from utils.multiview_reflection_consistency_improved import multiview_reflection_consistency_loss_improved
             # Sample additional viewpoints for reflection consistency
             train_cameras = scene.getTrainCameras()
             if len(train_cameras) >= opt.num_reflection_views:
@@ -149,12 +166,15 @@ def training(dataset: ModelParams,
                         ref_render_pkg = render(ref_viewpoint, gaussians, pipe, background)
                         reflection_render_pkgs.append(ref_render_pkg)
                     
-                    # Compute reflection consistency loss
-                    reflection_loss = lambda_reflection * multiview_reflection_consistency_loss_simple(
+                    # Compute reflection consistency loss (improved version)
+                    reflection_loss = multiview_reflection_consistency_loss_improved(
                         reflection_render_pkgs,
                         reflection_viewpoints,
-                        lambda_view_weight=opt.lambda_view_weight,
-                        mask_background=True
+                        lambda_weight=lambda_reflection_scheduled,  # 使用调度后的权重
+                        mask_background=True,
+                        use_highlight_mask=True,  # Only compute in highlight regions
+                        highlight_threshold=0.7,  # Threshold for highlight detection
+                        resolution_scale=0.5  # Use 1/2 resolution to reduce computation
                     )
                 else:
                     reflection_loss = torch.tensor(0.0, device="cuda")
@@ -170,7 +190,7 @@ def training(dataset: ModelParams,
         normal_loss = lambda_normal * (normal_error).mean()
         dist_loss = lambda_dist * (rend_dist).mean()
 
-        total_loss = loss + dist_loss + normal_loss + converge_enhanced + view_loss
+        total_loss = loss + dist_loss + normal_loss + converge_enhanced + view_loss + reflection_loss
         
         total_loss.backward()
 
@@ -181,7 +201,6 @@ def training(dataset: ModelParams,
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
             ema_normal_for_log = 0.4 * normal_loss.item() + 0.6 * ema_normal_for_log
             ema_converge_for_log = 0.4 * converge_enhanced.item() + 0.6 * ema_converge_for_log
-            ema_converge_local_for_log = 0.4 * converge_local_loss.item() + 0.6 * ema_converge_local_for_log
             ema_view_for_log = 0.4 * view_loss.item() + 0.6 * ema_view_for_log if lambda_view > 0 else 0.0
             ema_reflection_for_log = 0.4 * reflection_loss.item() + 0.6 * ema_reflection_for_log if lambda_reflection > 0 else ema_reflection_for_log
 
@@ -204,22 +223,14 @@ def training(dataset: ModelParams,
             if iteration == opt.iterations:
                 total_training_time_for_report = time.time() - training_start_time
                 progress_bar.close()
-                
-                # Format total training time using timedelta (simpler)
-                time_delta = timedelta(seconds=int(total_training_time_for_report))
-                
-                # Log total training time to TensorBoard
-                if tb_writer is not None:
-                    tb_writer.add_scalar('training/total_time_seconds', total_training_time_for_report, iteration)
-                    tb_writer.add_scalar('training/total_time_hours', total_training_time_for_report / 3600.0, iteration)
-                
-                # Print total training time (timedelta automatically formats nicely)
-                print(f"\n[Training Complete] Total training time: {time_delta} ({total_training_time_for_report:.2f} seconds)")
 
             # Log and save
             if tb_writer is not None:
                 tb_writer.add_scalar('train_loss_patches/dist_loss', ema_dist_for_log, iteration)
                 tb_writer.add_scalar('train_loss_patches/normal_loss', ema_normal_for_log, iteration)
+                tb_writer.add_scalar('train_loss_patches/converge_loss', ema_converge_for_log, iteration)
+                tb_writer.add_scalar('train_loss_patches/reflection_loss', ema_reflection_for_log, iteration)
+                tb_writer.add_scalar('train_loss_patches/view_loss', ema_view_for_log, iteration)
 
             training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end),
                             testing_iterations, scene, render, (pipe, background), dataset, total_training_time_for_report)
@@ -364,7 +375,7 @@ def training_report(
                     psnr_test += psnr(image, gt_image).mean().double()
 
                 psnr_test /= len(config['cameras'])
-                l1_test /= len(config['cameras'])
+                l1_test /= len(config['cameras']) 
                 print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
                 if tb_writer:
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
