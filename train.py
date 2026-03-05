@@ -108,81 +108,88 @@ def training(dataset: ModelParams,
         lambda_normal = opt.lambda_normal if iteration > 7000 else 0.0
         lambda_dist = opt.lambda_dist if iteration > 3000 else 0.0
 
-        # Local convergence loss (original adjacent constraint)
-        # 添加权重调度：逐渐增加权重，避免突然启用导致不稳定
-        lambda_converge_local = opt.lambda_converge_local if iteration > 15000 else 0.00  # Delayed to 15000 to avoid PSNR degradation
+        # ========== ORIGINAL UNBIASED-DEPTH: Local convergence loss ==========
+        # Restored to original Unbiased-Depth implementation for better results
+        lambda_converge_local = opt.lambda_converge_local if iteration > 10000 else 0.00  # Original Unbiased-Depth: enable at 10000
         if lambda_converge_local > 0:
-            # 权重调度：在15000-20000步之间逐渐增加权重（延迟启用以避免PSNR下降）
-            weight_schedule_converge = min(1.0, (iteration - 15000) / 5000.0)
-            lambda_converge_scheduled = lambda_converge_local * weight_schedule_converge
-            converge_local_loss = lambda_converge_scheduled * converge.mean()
+            converge_local_loss = lambda_converge_local * converge.mean()
         else:
             converge_local_loss = torch.tensor(0.0, device="cuda")
         
-        # Combined enhanced convergence loss
         converge_enhanced = converge_local_loss
+        # ========== END OF ORIGINAL UNBIASED-DEPTH CODE ==========
 
-        # View-dependent depth constraint loss (Innovation 3)
+        # ========== COMMENTED: View-dependent depth constraint loss (Innovation 3) ==========
+        # DISABLED: This improvement caused poor results, reverted to Unbiased-Depth
         # 添加权重调度：逐渐增加权重，避免突然启用导致不稳定
         # Improved: Better convergence with stable weight computation
-        lambda_view = opt.lambda_view if iteration > 3000 else 0.0  # Earlier activation
-        if lambda_view > 0:
-            # 权重调度：在3000-8000步之间逐渐增加权重（提前启用，更平滑）
-            weight_schedule_view = min(1.0, (iteration - 3000) / 5000.0)
-            lambda_view_scheduled = lambda_view * weight_schedule_view
-            
-            from utils.view_dependent_depth_constraint import view_dependent_depth_constraint_loss
-            view_loss = lambda_view_scheduled * view_dependent_depth_constraint_loss(
-                render_pkg, viewpoint_cam, 
-                lambda_view_weight=opt.lambda_view_weight,
-                mask_background=True
-            )
-        else:
-            view_loss = torch.tensor(0.0, device="cuda")
+        # COMMENTED CODE START:
+        # lambda_view = opt.lambda_view if iteration > 3000 else 0.0  # Earlier activation
+        # if lambda_view > 0:
+        #     # 权重调度：在3000-8000步之间逐渐增加权重（提前启用，更平滑）
+        #     weight_schedule_view = min(1.0, (iteration - 3000) / 5000.0)
+        #     lambda_view_scheduled = lambda_view * weight_schedule_view
+        #     
+        #     from utils.view_dependent_depth_constraint import view_dependent_depth_constraint_loss
+        #     view_loss = lambda_view_scheduled * view_dependent_depth_constraint_loss(
+        #         render_pkg, viewpoint_cam, 
+        #         lambda_view_weight=opt.lambda_view_weight,
+        #         mask_background=True
+        #     )
+        # else:
+        #     view_loss = torch.tensor(0.0, device="cuda")
+        # COMMENTED CODE END
+        view_loss = torch.tensor(0.0, device="cuda")
+        # ========== END OF COMMENTED: Innovation 3 ==========
 
-        # Multi-view reflection consistency loss (Innovation 1 - Improved)
+        # ========== COMMENTED: Multi-view reflection consistency loss (Innovation 1 - Improved) ==========
+        # DISABLED: This improvement caused poor results, reverted to Unbiased-Depth
         # Compute every N iterations to reduce computational cost
         # Improved: Better convergence with relaxed constraints
         # 添加权重调度：逐渐增加权重，避免突然启用导致不稳定
-        lambda_reflection = opt.lambda_reflection if (iteration > 8000 and iteration % opt.reflection_consistency_interval == 0) else 0.0
-        if lambda_reflection > 0:
-            # 权重调度：在8000-15000步之间逐渐增加权重（提前启用）
-            weight_schedule_reflection = min(1.0, (iteration - 8000) / 7000.0)
-            lambda_reflection_scheduled = lambda_reflection * weight_schedule_reflection
-            
-            from utils.multiview_reflection_consistency_improved import multiview_reflection_consistency_loss_improved
-            # Sample additional viewpoints for reflection consistency
-            train_cameras = scene.getTrainCameras()
-            if len(train_cameras) >= opt.num_reflection_views:
-                # Sample random viewpoints (excluding current viewpoint)
-                available_cameras = [cam for cam in train_cameras if cam.uid != viewpoint_cam.uid]
-                if len(available_cameras) >= opt.num_reflection_views - 1:
-                    sampled_cameras = random.sample(available_cameras, opt.num_reflection_views - 1)
-                    # Include current viewpoint
-                    reflection_viewpoints = [viewpoint_cam] + sampled_cameras
-                    
-                    # Render additional viewpoints
-                    reflection_render_pkgs = []
-                    for ref_viewpoint in reflection_viewpoints:
-                        ref_render_pkg = render(ref_viewpoint, gaussians, pipe, background)
-                        reflection_render_pkgs.append(ref_render_pkg)
-                    
-                    # Compute reflection consistency loss (improved version with better convergence)
-                    reflection_loss = multiview_reflection_consistency_loss_improved(
-                        reflection_render_pkgs,
-                        reflection_viewpoints,
-                        lambda_weight=lambda_reflection_scheduled,  # 使用调度后的权重
-                        mask_background=True,
-                        use_highlight_mask=False,  # Disabled: too strict, causes convergence issues
-                        highlight_threshold=0.5,  # Lower threshold if enabled
-                        resolution_scale=0.75  # Increased: less information loss
-                    )
-                else:
-                    reflection_loss = torch.tensor(0.0, device="cuda")
-            else:
-                reflection_loss = torch.tensor(0.0, device="cuda")
-        else:
-            reflection_loss = torch.tensor(0.0, device="cuda")
+        # COMMENTED CODE START:
+        # lambda_reflection = opt.lambda_reflection if (iteration > 8000 and iteration % opt.reflection_consistency_interval == 0) else 0.0
+        # if lambda_reflection > 0:
+        #     # 权重调度：在8000-15000步之间逐渐增加权重（提前启用）
+        #     weight_schedule_reflection = min(1.0, (iteration - 8000) / 7000.0)
+        #     lambda_reflection_scheduled = lambda_reflection * weight_schedule_reflection
+        #     
+        #     from utils.multiview_reflection_consistency_improved import multiview_reflection_consistency_loss_improved
+        #     # Sample additional viewpoints for reflection consistency
+        #     train_cameras = scene.getTrainCameras()
+        #     if len(train_cameras) >= opt.num_reflection_views:
+        #         # Sample random viewpoints (excluding current viewpoint)
+        #         available_cameras = [cam for cam in train_cameras if cam.uid != viewpoint_cam.uid]
+        #         if len(available_cameras) >= opt.num_reflection_views - 1:
+        #             sampled_cameras = random.sample(available_cameras, opt.num_reflection_views - 1)
+        #             # Include current viewpoint
+        #             reflection_viewpoints = [viewpoint_cam] + sampled_cameras
+        #             
+        #             # Render additional viewpoints
+        #             reflection_render_pkgs = []
+        #             for ref_viewpoint in reflection_viewpoints:
+        #                 ref_render_pkg = render(ref_viewpoint, gaussians, pipe, background)
+        #                 reflection_render_pkgs.append(ref_render_pkg)
+        #             
+        #             # Compute reflection consistency loss (improved version with better convergence)
+        #             reflection_loss = multiview_reflection_consistency_loss_improved(
+        #                 reflection_render_pkgs,
+        #                 reflection_viewpoints,
+        #                 lambda_weight=lambda_reflection_scheduled,  # 使用调度后的权重
+        #                 mask_background=True,
+        #                 use_highlight_mask=False,  # Disabled: too strict, causes convergence issues
+        #                 highlight_threshold=0.5,  # Lower threshold if enabled
+        #                 resolution_scale=0.75  # Increased: less information loss
+        #             )
+        #         else:
+        #             reflection_loss = torch.tensor(0.0, device="cuda")
+        #     else:
+        #         reflection_loss = torch.tensor(0.0, device="cuda")
+        # else:
+        #     reflection_loss = torch.tensor(0.0, device="cuda")
+        # COMMENTED CODE END
+        reflection_loss = torch.tensor(0.0, device="cuda")
+        # ========== END OF COMMENTED: Innovation 1 ==========
 
         rend_dist   = render_pkg["rend_dist"]  
         rend_normal = render_pkg['rend_normal']
@@ -191,7 +198,7 @@ def training(dataset: ModelParams,
         normal_loss = lambda_normal * (normal_error).mean()
         dist_loss = lambda_dist * (rend_dist).mean()
 
-        total_loss = loss + dist_loss + normal_loss + converge_enhanced + view_loss + reflection_loss
+        total_loss = loss + dist_loss + normal_loss + converge_enhanced
         
         total_loss.backward()
 
@@ -202,8 +209,11 @@ def training(dataset: ModelParams,
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
             ema_normal_for_log = 0.4 * normal_loss.item() + 0.6 * ema_normal_for_log
             ema_converge_for_log = 0.4 * converge_enhanced.item() + 0.6 * ema_converge_for_log
-            ema_view_for_log = 0.4 * view_loss.item() + 0.6 * ema_view_for_log if lambda_view > 0 else 0.0
-            ema_reflection_for_log = 0.4 * reflection_loss.item() + 0.6 * ema_reflection_for_log if lambda_reflection > 0 else ema_reflection_for_log
+            # COMMENTED: View and reflection loss logging (disabled with improvements)
+            # ema_view_for_log = 0.4 * view_loss.item() + 0.6 * ema_view_for_log if lambda_view > 0 else 0.0
+            # ema_reflection_for_log = 0.4 * reflection_loss.item() + 0.6 * ema_reflection_for_log if lambda_reflection > 0 else ema_reflection_for_log
+            ema_view_for_log = 0.0
+            ema_reflection_for_log = 0.0
 
             if iteration % 10 == 0:
                 loss_dict = {
@@ -211,8 +221,10 @@ def training(dataset: ModelParams,
                     # "distort": f"{ema_dist_for_log:.{5}f}",
                     "normal": f"{ema_normal_for_log:.{5}f}",
                     "converge": f"{ema_converge_for_log:.{5}f}",
-                    "view": f"{ema_view_for_log:.{5}f}" if lambda_view > 0 else "0.0",
-                    "reflection": f"{ema_reflection_for_log:.{5}f}" if lambda_reflection > 0 else "0.0",
+                    # "view": f"{ema_view_for_log:.{5}f}" if lambda_view > 0 else "0.0",  # COMMENTED: Disabled with improvements
+                    # "reflection": f"{ema_reflection_for_log:.{5}f}" if lambda_reflection > 0 else "0.0",  # COMMENTED: Disabled with improvements
+                    "view": "0.0",  # Disabled: reverted to Unbiased-Depth
+                    "reflection": "0.0",  # Disabled: reverted to Unbiased-Depth
                     "Points": f"{len(gaussians.get_xyz)}"  
                 }
                 progress_bar.set_postfix(loss_dict)
@@ -230,8 +242,9 @@ def training(dataset: ModelParams,
                 tb_writer.add_scalar('train_loss_patches/dist_loss', ema_dist_for_log, iteration)
                 tb_writer.add_scalar('train_loss_patches/normal_loss', ema_normal_for_log, iteration)
                 tb_writer.add_scalar('train_loss_patches/converge_loss', ema_converge_for_log, iteration)
-                tb_writer.add_scalar('train_loss_patches/reflection_loss', ema_reflection_for_log, iteration)
-                tb_writer.add_scalar('train_loss_patches/view_loss', ema_view_for_log, iteration)
+                # COMMENTED: View and reflection loss logging (disabled with improvements)
+                # tb_writer.add_scalar('train_loss_patches/reflection_loss', ema_reflection_for_log, iteration)
+                # tb_writer.add_scalar('train_loss_patches/view_loss', ema_view_for_log, iteration)
 
             training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end),
                             testing_iterations, scene, render, (pipe, background), dataset, total_training_time_for_report)

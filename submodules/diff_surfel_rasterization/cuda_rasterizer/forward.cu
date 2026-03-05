@@ -327,18 +327,21 @@ renderCUDA(
     float first_depth = 0;
 	float last_depth = 0;
     float last_G = 0;
-    float last_normal[3] = {0.0f, 0.0f, 0.0f};  // Store last Gaussian's normal for surface-aware constraint
+    // float last_normal[3] = {0.0f, 0.0f, 0.0f};  // REMOVED: Not needed without normal-guided refinement
     float cum_opacity = 0;
 	
+	// COMMENTED: Depth Distribution Modeling (not needed for Unbiased-Depth)
 	// Depth Distribution Modeling: Track statistics for computing depth distribution
 	// We model depth as a probability distribution P(d|x) = sum(pi_k * N(d|mu_k, sigma_k^2))
 	// where pi_k is the weight of Gaussian k, mu_k is its depth, sigma_k^2 is its variance
+	/*
 	float weighted_depth_sum = 0.0f;      // Sum of weighted depths: sum(pi_k * mu_k)
 	float weighted_depth_sq_sum = 0.0f;   // Sum of weighted depth squares: sum(pi_k * (mu_k^2 + sigma_k^2))
 	float weight_sum = 0.0f;               // Sum of weights: sum(pi_k)
 	float distribution_mean = 0.0f;       // Mean of depth distribution: E[d] = sum(pi_k * mu_k)
 	float distribution_variance = 0.0f;   // Variance of depth distribution: Var(d) = E[d^2] - E[d]^2
 	int distribution_gaussian_count = 0; // Count of Gaussians contributing to the distribution
+	*/
 #endif
 
 	// Iterate over batches until all done or range is complete
@@ -435,56 +438,16 @@ renderCUDA(
             //     median_contributor = contributor;
             // }
 
-            // ========== ORIGINAL UNBIASED-DEPTH CODE (COMMENTED) ==========
-            // Original Unbiased-Depth depth selection method:
+            // ========== ORIGINAL UNBIASED-DEPTH CODE: Depth Selection ==========
+            // Restored to original Unbiased-Depth implementation for better results
             // Cumulated opacity. Eq. (9) from paper Unbiased 2DGS.
-            // if (cum_opacity < 0.6f) {
-            //     // Make the depth map smoother
-            //     median_depth = last_depth > 0 ? (last_depth + depth) * 0.5 : depth;
-            //     median_contributor = contributor;
-            // }
-            // cum_opacity += (alpha + 0.1 * G);
-            // ========== END OF ORIGINAL UNBIASED-DEPTH CODE ==========
-
-            // ========== IMPROVED METHOD: Hybrid Depth Selection ==========
-            // Combine cum_opacity threshold with distribution information for better stability
-            // Core idea: Use cum_opacity for primary selection, but smooth with distribution mean when uncertain
-            
-            // Update cum_opacity (original Unbiased-Depth method)
-            cum_opacity += (alpha + 0.1 * G);
-            
-            // Optimized depth distribution statistics: compute only when needed
-            // Skip expensive variance computation if not needed for depth selection
-            weight_sum += w;
-            weighted_depth_sum += w * depth;
-            distribution_gaussian_count++;
-            
-            // Fast mean computation (always needed)
-            if (weight_sum > 1e-6f) {
-                distribution_mean = weighted_depth_sum / weight_sum;
-                
-                // Lazy variance computation: only when needed for smoothing (not for loss to save computation)
-                // Compute variance only when needed for depth selection smoothing
-                if (distribution_gaussian_count >= 2 && cum_opacity < 0.6f) {
-                    float sigma_k_sq = rho * 0.05f;
-                    weighted_depth_sq_sum += w * (depth * depth + sigma_k_sq);
-                    distribution_variance = (weighted_depth_sq_sum / weight_sum) - (distribution_mean * distribution_mean);
-                    distribution_variance = fmaxf(distribution_variance, 0.0f);
-                }
-            }
-            
-            // Ultra-fast depth selection: use original Unbiased-Depth method (fastest)
-            // Skip distribution smoothing to maximize speed
             if (cum_opacity < 0.6f) {
-                // Use original Unbiased-Depth method (fastest, no distribution computation)
-                if (last_depth > 0) {
-                    median_depth = (last_depth + depth) * 0.5f;  // Original smoothing
-                } else {
-                    median_depth = depth;  // First depth
-                }
+                // Make the depth map smoother
+                median_depth = last_depth > 0 ? (last_depth + depth) * 0.5f : depth;
                 median_contributor = contributor;
             }
-            // ========== END OF IMPROVED METHOD ==========
+            cum_opacity += (alpha + 0.1 * G);
+            // ========== END OF ORIGINAL UNBIASED-DEPTH CODE ==========
             
 			// Render normal map
 			for (int ch=0; ch<3; ch++) N[ch] += normal[ch] * w;
@@ -494,98 +457,39 @@ renderCUDA(
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * w;
 
-			// ========== ORIGINAL UNBIASED-DEPTH CODE (COMMENTED) ==========
-			// Original Unbiased-Depth convergence loss: adjacent Gaussian depth difference constraint
-			// if((T > 0.09f)) {
-			//     if(last_converge > 0) {
-			//         // Original adjacent constraint: (d_i - d_{i-1})^2
-			//         Converge += min(G, last_G) * (depth - last_depth) * (depth - last_depth);
-			//     }
-			//     last_G = G;
-			//     last_converge = contributor;
-			// }
-			// ========== END OF ORIGINAL UNBIASED-DEPTH CODE ==========
-
-			// ========== STRATEGY 4: Surface-Aware Local Constraint ==========
-			// Innovation: Combine normal information with depth difference for surface-aware constraint
-			// Key idea: Only constrain Gaussians on the same surface (similar normals)
-			// - Normal similarity > 0.9: Strong constraint (likely same surface)
-			// - Normal similarity 0.7-0.9: Normal constraint (likely same object)
-			// - Normal similarity 0.3-0.7: Weak constraint (likely different parts)
-			// - Normal similarity < 0.3: Very weak or no constraint (likely different objects)
-			// This is more physically accurate than Unbiased-Depth's fixed constraint
+			// ========== IMPROVEMENT 1: Improved Base Weight ==========
+			// Innovation: Replace min(G, last_G) with hybrid geometric mean weight
+			// Original Unbiased-Depth: min(G, last_G) * (depth - last_depth)^2
+			// Our improvement: sqrt(G * last_G) * (0.7 + 0.3 * ratio) * (depth - last_depth)^2
+			// where ratio = min(G, last_G) / max(G, last_G)
+			// This provides smoother weighting while maintaining sensitivity to smaller Gaussians
 			if((T > 0.09f)) {
 				if(last_converge > 0) {
-					float w = alpha * T;
-					const float lambda_consistency = 0.1f;
+					// Step 1: Compute improved base weight
+					// Geometric mean: sqrt(G * last_G) - smoother than min
+					float geometric_mean = sqrtf(G * last_G);
 					
-					// Step 1: Calculate normal similarity (dot product)
-					// Normal similarity reflects whether Gaussians are on the same surface
-					float normal_similarity = normal[0] * last_normal[0] + 
-											  normal[1] * last_normal[1] + 
-											  normal[2] * last_normal[2];
-					normal_similarity = fmaxf(-1.0f, fminf(1.0f, normal_similarity));  // Clamp to [-1, 1]
+					// Ratio: min(G, last_G) / max(G, last_G) - ranges from 0 to 1
+					float min_G = min(G, last_G);
+					float max_G = max(G, last_G);
+					float ratio = (max_G > 1e-8f) ? (min_G / max_G) : 0.0f;
 					
-					// Step 2: Adaptive weight based on normal similarity (KEY INNOVATION)
-					// This is different from Unbiased-Depth which doesn't use normal information
-					float adaptive_weight = 1.0f;
-					if (normal_similarity > 0.9f) {
-						// Very similar normals: likely same surface, strong constraint
-						adaptive_weight = 2.0f;
-					} else if (normal_similarity > 0.7f) {
-						// Similar normals: likely same object, normal constraint
-						adaptive_weight = 1.0f;
-					} else if (normal_similarity > 0.3f) {
-						// Less similar normals: likely different parts, weak constraint
-						adaptive_weight = 0.5f;
-					} else {
-						// Very different normals: likely different objects, very weak constraint
-						adaptive_weight = 0.1f;
-					}
+					// Hybrid weight: 70% geometric mean + 30% ratio-weighted
+					// This balances smoothness (geometric mean) with sensitivity (ratio)
+					float improved_base_weight = geometric_mean * (0.7f + 0.3f * ratio);
 					
-					// Step 3: Combine with depth difference
-					// If depth difference is large AND normals are different, likely different objects
+					// Step 2: Compute depth difference squared
 					float depth_diff = depth - last_depth;
-					float depth_diff_abs = fabsf(depth_diff);
+					float depth_diff_sq = depth_diff * depth_diff;
 					
-					if (depth_diff_abs > 0.2f && normal_similarity < 0.5f) {
-						// Large depth difference AND different normals: likely different objects, no constraint
-						adaptive_weight = 0.0f;
-					} else if (depth_diff_abs < 0.05f && normal_similarity > 0.8f) {
-						// Small depth difference AND similar normals: definitely same surface, strengthen
-						adaptive_weight *= 1.2f;
-					}
-					
-					// Step 4: Combine with distribution information (optional refinement)
-					if (distribution_gaussian_count > 1 && weight_sum > 1e-6f) {
-						float depth_diff_from_mean = depth - distribution_mean;
-						float last_diff_from_mean = last_depth - distribution_mean;
-						float mean_distance = (fabsf(depth_diff_from_mean) + fabsf(last_diff_from_mean)) * 0.5f;
-						
-						if (mean_distance < 0.05f && depth_diff_abs < 0.1f && normal_similarity > 0.7f) {
-							// All indicators suggest same surface: strengthen constraint
-							adaptive_weight *= 1.2f;
-						} else if (mean_distance > 0.3f && depth_diff_abs > 0.15f && normal_similarity < 0.5f) {
-							// All indicators suggest different surfaces: weaken constraint
-							adaptive_weight *= 0.5f;
-						}
-					}
-					
-					// Surface-aware local constraint: (d_i - d_{i-1})^2 with adaptive weight based on normal similarity
-					// This is fundamentally different from Unbiased-Depth: uses normal information for surface awareness
-					if (adaptive_weight > 0.01f) {
-						Converge += w * lambda_consistency * adaptive_weight * depth_diff * depth_diff;
-					}
+					// Step 3: Apply improved convergence loss
+					// Loss = improved_base_weight * (depth - last_depth)^2
+					Converge += improved_base_weight * depth_diff_sq;
 				}
-				
-				// Keep track of last values for backward pass
 				last_G = G;
 				last_converge = contributor;
-				last_normal[0] = normal[0];
-				last_normal[1] = normal[1];
-				last_normal[2] = normal[2];
 			}
-			// ========== END OF STRATEGY 4 ==========
+			// ========== END OF IMPROVEMENT 1 ==========
 			
 			// DISABLED: Improvement 2.1: Global depth convergence loss
 			// Accumulate weighted depth and weights (will compute mean after loop)

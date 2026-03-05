@@ -27,7 +27,6 @@ if __name__ == '__main__':
 
     lambda_normal = 0.05        # 2D_GS Normal Consistency
     lambda_dist = 0             # 2D_GS Depth Distortion
-    lambda_converge = 5.0       # Converge Loss
     seed = 1
 
     for scene in dtu_scenes:
@@ -42,7 +41,6 @@ if __name__ == '__main__':
                 f"--save_iterations {iterations}",
                 f"--lambda_normal {lambda_normal}",
                 f"--lambda_dist {lambda_dist}",
-                f"--lambda_converge {lambda_converge}",
                 f"--iterations {iterations}",
                 f"--densify_until_iter {densify_until_iter}",
                 f"--gamma 0.5",
@@ -73,7 +71,7 @@ if __name__ == '__main__':
             os.system(cmd)
 
     for scene in dtu_scenes:
-        output_path = "../output/unbaised/eval/dtu/" + scene
+        output_path = "../output/distrigs/dtu/" + scene
         # ------------------------ Evaluate ------------------------
         if not skip_metrics:
             scan_id = scene[4:]
