@@ -231,6 +231,12 @@ renderCUDA(
 
 	float last_convergeDepth = 0;
     float last_G = 0;
+	
+	// Depth Distribution Modeling: Track statistics for gradient computation
+	// We approximate the distribution mean E[d] using weighted average of processed Gaussians
+	float backward_weighted_depth_sum = 0.0f;  // Sum of weighted depths for backward pass
+	float backward_weight_sum = 0.0f;           // Sum of weights for backward pass
+	float backward_distribution_mean = 0.0f;     // Approximated distribution mean E[d]
 
 	float accum_depth_rec = 0;
 	float accum_alpha_rec = 0;
@@ -358,9 +364,35 @@ renderCUDA(
 
                 constexpr float forward_scale = 1.25; // Encourage convergence toward camera
 
-                // Improved backward pass for reflection-aware adaptive adjacent constraint
-                // Loss = reflection_weight * adaptive_weight * min(G, last_G) * (d_i - d_{i-1})^2
-                // Gradient: dL/dd = reflection_weight * adaptive_weight * min(G, last_G) * 2 * (d_i - d_{i-1})
+                // ========== ORIGINAL UNBIASED-DEPTH CODE (COMMENTED) ==========
+                // Original Unbiased-Depth backward pass for adjacent constraint
+                // Loss = min(G, last_G) * (d_i - d_{i-1})^2
+                // Gradient: dL/dd = min(G, last_G) * 2 * (d_i - d_{i-1})
+                // if (contributor < final_converge) {
+                //     float front_grad = min(G, front_G) * 2.0f * (c_d - front_depth) * dL_dpixConverge;
+                //     if (c_d > front_depth) {
+                //         front_grad *= forward_scale;
+                //     }
+                //     front_grad = abs(c_d - front_depth) > ConvergeThreshold ? 0.0f : front_grad;
+                //     dL_dz += front_grad;
+                //
+                //     if (contributor < final_converge - 1) {
+                //         float back_grad = min(G, last_G) * 2.0f * (c_d - last_convergeDepth) * dL_dpixConverge;
+                //         if (c_d > last_convergeDepth) {
+                //             back_grad *= forward_scale;
+                //         }
+                //         back_grad = abs(c_d - last_convergeDepth) > ConvergeThreshold ? 0.0f : back_grad;
+                //         dL_dz += back_grad;
+                //     }
+                // }
+                // ========== END OF ORIGINAL UNBIASED-DEPTH CODE ==========
+
+                // ========== NEW METHOD: Backward pass for depth distribution-based convergence loss ==========
+                // Loss = reflection_weight * w * [lambda_concentration * Var(P) + lambda_consistency * (d - E[d])^2]
+                // Gradient computation:
+                // dL/dd = reflection_weight * w * lambda_consistency * 2 * (d - E[d]) * (1 - d(E[d])/dd)
+                // For simplicity, we treat E[d] as constant (similar to batch normalization)
+                // This gives: dL/dd ≈ reflection_weight * w * lambda_consistency * 2 * (d - E[d])
                 if (contributor < final_converge) {
                     // Estimate specular strength from RGB (same as forward)
                     float rgb_r = collected_colors[0 * BLOCK_SIZE + j];
@@ -384,35 +416,37 @@ renderCUDA(
                     const float lambda_spec = 2.0f;
                     float reflection_weight = 1.0f + lambda_spec * specular_strength;
                     
-                    // Compute adaptive weight (same as forward)
-                    float depth_diff = abs(c_d - last_convergeDepth);
-                    float adaptive_weight = 1.0f;
-                    const float lambda_penalty = 1.0f;
+                    // Compute depth distribution statistics for gradient computation
+                    // We approximate E[d] using weighted average of processed Gaussians
+                    // This is a simplified approximation since backward pass processes Gaussians in reverse order
+                    const float lambda_concentration = 0.5f;
+                    const float lambda_consistency = 1.0f;
                     
-                    if (depth_diff > ConvergeThreshold) {
-                        float excess = depth_diff - ConvergeThreshold;
-                        adaptive_weight = expf(-lambda_penalty * excess / ConvergeThreshold);
+                    float w = alpha * T;
+                    
+                    // Update backward distribution statistics (approximate)
+                    backward_weight_sum += w;
+                    if (backward_weight_sum > 1e-6f) {
+                        backward_weighted_depth_sum += w * c_d;
+                        backward_distribution_mean = backward_weighted_depth_sum / backward_weight_sum;
                     }
                     
-                    // Compute gradient for improved convergence loss
-                    if (depth_diff <= ConvergeThreshold || adaptive_weight > 0.01f) {
-                        float front_grad = reflection_weight * adaptive_weight * min(G, front_G) * 2.0f * (c_d - front_depth) * dL_dpixConverge;
-                        if (c_d > front_depth) {
-                            front_grad *= forward_scale;
+                    // Gradient for consistency term: 2 * (d - E[d])
+                    // Use approximated distribution mean
+                    if (backward_weight_sum > 1e-6f && backward_distribution_mean > 0.0f) {
+                        // Consistency term gradient: 2 * (d - E[d])
+                        float consistency_grad = 2.0f * (c_d - backward_distribution_mean);
+                        float grad = reflection_weight * w * lambda_consistency * consistency_grad * dL_dpixConverge;
+                        
+                        // Apply forward scale for encouraging convergence toward camera
+                        if (c_d > backward_distribution_mean) {
+                            grad *= forward_scale;
                         }
-                        front_grad = abs(c_d - front_depth) > ConvergeThreshold ? 0.0f : front_grad;
-                        dL_dz += front_grad;
-
-                        if (contributor < final_converge - 1) {
-                            float back_grad = reflection_weight * adaptive_weight * min(G, last_G) * 2.0f * (c_d - last_convergeDepth) * dL_dpixConverge;
-                            if (c_d > last_convergeDepth) {
-                                back_grad *= forward_scale;
-                            }
-                            back_grad = abs(c_d - last_convergeDepth) > ConvergeThreshold ? 0.0f : back_grad;
-                            dL_dz += back_grad;
-                        }
+                        
+                        dL_dz += grad;
                     }
                 }
+                // ========== END OF NEW METHOD ==========
 
 				last_convergeDepth = c_d;
                 last_G = G;
