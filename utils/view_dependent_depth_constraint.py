@@ -182,29 +182,52 @@ def view_dependent_depth_constraint_loss(
     # 2. 计算视角-法线夹角
     cos_theta = compute_view_normal_angle(view_dirs, surf_normal)  # [H, W]
     
-    # 3. 计算视角依赖权重
+    # 3. 计算视角依赖权重（改进版：更稳定的权重计算）
     # w_view(x) = exp(-λ_view_weight · (1 - cos(θ(x))))
     # 当cos(θ)接近1时（正面视角），权重接近1.0（强约束）
     # 当cos(θ)接近-1时（侧面视角），权重接近exp(-2λ)（弱约束）
-    view_weight = torch.exp(-lambda_view_weight * (1.0 - cos_theta))  # [H, W]
+    
+    # Improved: Use linear interpolation instead of exp for better stability
+    # Linear weight: w = 0.1 + 0.9 * (cos_theta + 1) / 2
+    # This gives: cos_theta = 1 -> w = 1.0, cos_theta = -1 -> w = 0.1
+    # More stable than exp function
+    view_weight_linear = 0.1 + 0.9 * (cos_theta + 1.0) / 2.0  # [H, W]
+    
+    # Also compute exp-based weight but with reduced lambda
+    lambda_view_weight_reduced = lambda_view_weight * 0.5  # Reduce exponential strength
+    view_weight_exp = torch.exp(-lambda_view_weight_reduced * (1.0 - cos_theta))  # [H, W]
+    
+    # Blend both weights: 70% linear + 30% exp (linear is more stable)
+    view_weight = 0.7 * view_weight_linear + 0.3 * view_weight_exp
     
     # 添加数值稳定性处理：限制权重范围，避免异常值
-    view_weight = torch.clamp(view_weight, 0.01, 10.0)  # 限制权重在合理范围内
+    view_weight = torch.clamp(view_weight, 0.05, 5.0)  # 更合理的权重范围
     
-    # 4. 计算深度梯度
+    # 4. 计算深度梯度（改进版：添加阈值保护）
     depth_grad_sq = compute_depth_gradient(surf_depth)  # [H, W]
     
+    # 添加阈值保护：只约束超出阈值的梯度（避免过度约束已平滑的区域）
+    grad_threshold = 0.001  # Only penalize gradients above this threshold
+    excess_grad = torch.clamp(depth_grad_sq - grad_threshold, min=0.0)  # [H, W]
+    
     # 5. 应用视角依赖权重
-    weighted_depth_grad = view_weight * depth_grad_sq  # [H, W]
+    weighted_depth_grad = view_weight * excess_grad  # [H, W]
     
     # 6. Mask背景区域（可选）
     if mask_background and rend_alpha is not None:
         # 使用alpha值作为mask（alpha < 0.5的区域视为背景）
         alpha_mask = (rend_alpha.squeeze(0) > 0.5).float()  # [H, W]
         weighted_depth_grad = weighted_depth_grad * alpha_mask
-    
-    # 7. 计算平均损失
-    loss = weighted_depth_grad.mean()
+        
+        # 计算有效像素数量（避免除零）
+        valid_pixels = alpha_mask.sum()
+        if valid_pixels > 0:
+            loss = weighted_depth_grad.sum() / valid_pixels
+        else:
+            loss = torch.tensor(0.0, device=weighted_depth_grad.device, requires_grad=True)
+    else:
+        # 7. 计算平均损失
+        loss = weighted_depth_grad.mean()
     
     return loss
 

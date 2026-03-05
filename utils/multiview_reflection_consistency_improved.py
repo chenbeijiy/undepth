@@ -69,9 +69,9 @@ def multiview_reflection_consistency_loss_improved(
     viewpoint_cameras,
     lambda_weight=1.0,
     mask_background=True,
-    use_highlight_mask=True,
-    highlight_threshold=0.7,
-    resolution_scale=0.5
+    use_highlight_mask=False,  # Disabled by default: too strict, causes convergence issues
+    highlight_threshold=0.5,  # Lowered threshold if enabled
+    resolution_scale=0.75  # Increased from 0.5: less information loss
 ):
     """
     改进版多视角反射一致性损失
@@ -194,7 +194,7 @@ def multiview_reflection_consistency_loss_improved(
                 highlight_mask_i = highlight_masks[i]
                 highlight_mask_j = highlight_masks[j]
             
-            # 计算亮度差异（简化版：直接使用L1损失）
+            # 计算亮度差异（使用Huber loss for better stability）
             luminance_diff = torch.abs(L_i - L_j)  # [H, W]
             
             # 应用mask
@@ -204,7 +204,7 @@ def multiview_reflection_consistency_loss_improved(
             if mask_background:
                 combined_mask = combined_mask * alpha_mask_i * alpha_mask_j
             
-            # Mask非高光区域（如果启用）
+            # Mask非高光区域（如果启用，但使用更宽松的策略）
             if use_highlight_mask:
                 # 只在高光区域计算（两个视角都是高光）
                 combined_mask = combined_mask * highlight_mask_i * highlight_mask_j
@@ -212,12 +212,22 @@ def multiview_reflection_consistency_loss_improved(
             # 应用mask并计算损失
             masked_diff = luminance_diff * combined_mask  # [H, W]
             
-            # 计算有效像素数量（避免除零）
+            # 计算有效像素数量（避免除零，添加最小值保护）
             valid_pixels = combined_mask.sum()
-            if valid_pixels > 0:
-                pair_loss = masked_diff.sum() / valid_pixels
+            min_valid_pixels = max(1.0, H * W * 0.01)  # At least 1% of pixels
+            
+            if valid_pixels > min_valid_pixels:
+                # Use Huber loss for better numerical stability
+                # Huber loss: smooth L1 loss
+                delta = 0.1  # Huber loss threshold
+                huber_mask = (masked_diff < delta).float()
+                l2_loss = 0.5 * masked_diff ** 2
+                l1_loss = delta * (masked_diff - 0.5 * delta)
+                huber_loss = huber_mask * l2_loss + (1 - huber_mask) * l1_loss
+                pair_loss = huber_loss.sum() / valid_pixels
             else:
-                pair_loss = torch.tensor(0.0, device=luminance_diff.device)
+                # If too few valid pixels, return small loss instead of zero
+                pair_loss = torch.tensor(0.001, device=luminance_diff.device, requires_grad=True)
             
             total_loss = total_loss + pair_loss
             num_pairs += 1

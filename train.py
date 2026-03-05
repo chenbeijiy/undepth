@@ -124,10 +124,11 @@ def training(dataset: ModelParams,
 
         # View-dependent depth constraint loss (Innovation 3)
         # 添加权重调度：逐渐增加权重，避免突然启用导致不稳定
-        lambda_view = opt.lambda_view if iteration > 5000 else 0.0
+        # Improved: Better convergence with stable weight computation
+        lambda_view = opt.lambda_view if iteration > 3000 else 0.0  # Earlier activation
         if lambda_view > 0:
-            # 权重调度：在5000-10000步之间逐渐增加权重
-            weight_schedule_view = min(1.0, (iteration - 5000) / 5000.0)
+            # 权重调度：在3000-8000步之间逐渐增加权重（提前启用，更平滑）
+            weight_schedule_view = min(1.0, (iteration - 3000) / 5000.0)
             lambda_view_scheduled = lambda_view * weight_schedule_view
             
             from utils.view_dependent_depth_constraint import view_dependent_depth_constraint_loss
@@ -141,12 +142,12 @@ def training(dataset: ModelParams,
 
         # Multi-view reflection consistency loss (Innovation 1 - Improved)
         # Compute every N iterations to reduce computational cost
-        # Improved: Use simpler implementation with lower resolution and highlight masking
+        # Improved: Better convergence with relaxed constraints
         # 添加权重调度：逐渐增加权重，避免突然启用导致不稳定
-        lambda_reflection = opt.lambda_reflection if (iteration > 10000 and iteration % opt.reflection_consistency_interval == 0) else 0.0
+        lambda_reflection = opt.lambda_reflection if (iteration > 8000 and iteration % opt.reflection_consistency_interval == 0) else 0.0
         if lambda_reflection > 0:
-            # 权重调度：在10000-15000步之间逐渐增加权重
-            weight_schedule_reflection = min(1.0, (iteration - 10000) / 5000.0)
+            # 权重调度：在8000-15000步之间逐渐增加权重（提前启用）
+            weight_schedule_reflection = min(1.0, (iteration - 8000) / 7000.0)
             lambda_reflection_scheduled = lambda_reflection * weight_schedule_reflection
             
             from utils.multiview_reflection_consistency_improved import multiview_reflection_consistency_loss_improved
@@ -166,15 +167,15 @@ def training(dataset: ModelParams,
                         ref_render_pkg = render(ref_viewpoint, gaussians, pipe, background)
                         reflection_render_pkgs.append(ref_render_pkg)
                     
-                    # Compute reflection consistency loss (improved version)
+                    # Compute reflection consistency loss (improved version with better convergence)
                     reflection_loss = multiview_reflection_consistency_loss_improved(
                         reflection_render_pkgs,
                         reflection_viewpoints,
                         lambda_weight=lambda_reflection_scheduled,  # 使用调度后的权重
                         mask_background=True,
-                        use_highlight_mask=True,  # Only compute in highlight regions
-                        highlight_threshold=0.7,  # Threshold for highlight detection
-                        resolution_scale=0.5  # Use 1/2 resolution to reduce computation
+                        use_highlight_mask=False,  # Disabled: too strict, causes convergence issues
+                        highlight_threshold=0.5,  # Lower threshold if enabled
+                        resolution_scale=0.75  # Increased: less information loss
                     )
                 else:
                     reflection_loss = torch.tensor(0.0, device="cuda")
