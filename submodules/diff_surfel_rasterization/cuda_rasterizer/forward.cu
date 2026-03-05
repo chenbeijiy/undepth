@@ -452,46 +452,34 @@ renderCUDA(
             // Update cum_opacity (original Unbiased-Depth method)
             cum_opacity += (alpha + 0.1 * G);
             
-            // Update depth distribution statistics for smoothing
+            // Optimized depth distribution statistics: compute only when needed
+            // Skip expensive variance computation if not needed for depth selection
             weight_sum += w;
+            weighted_depth_sum += w * depth;
+            distribution_gaussian_count++;
+            
+            // Fast mean computation (always needed)
             if (weight_sum > 1e-6f) {
-                weighted_depth_sum += w * depth;
-                // Improved variance approximation: use a smaller scale factor for stability
-                float sigma_k_sq = rho * 0.05f;  // Reduced from 0.1f for more conservative variance
-                weighted_depth_sq_sum += w * (depth * depth + sigma_k_sq);
-                distribution_gaussian_count++;
-                
-                // Compute current distribution mean and variance
                 distribution_mean = weighted_depth_sum / weight_sum;
-                distribution_variance = (weighted_depth_sq_sum / weight_sum) - (distribution_mean * distribution_mean);
-                distribution_variance = fmaxf(distribution_variance, 0.0f);
+                
+                // Lazy variance computation: only when needed for smoothing (not for loss to save computation)
+                // Compute variance only when needed for depth selection smoothing
+                if (distribution_gaussian_count >= 2 && cum_opacity < 0.6f) {
+                    float sigma_k_sq = rho * 0.05f;
+                    weighted_depth_sq_sum += w * (depth * depth + sigma_k_sq);
+                    distribution_variance = (weighted_depth_sq_sum / weight_sum) - (distribution_mean * distribution_mean);
+                    distribution_variance = fmaxf(distribution_variance, 0.0f);
+                }
             }
             
-            // Hybrid depth selection: primarily use cum_opacity, but smooth with distribution
+            // Ultra-fast depth selection: use original Unbiased-Depth method (fastest)
+            // Skip distribution smoothing to maximize speed
             if (cum_opacity < 0.6f) {
-                // Primary selection: use cum_opacity threshold (original Unbiased-Depth)
+                // Use original Unbiased-Depth method (fastest, no distribution computation)
                 if (last_depth > 0) {
-                    // Original smoothing: average with last depth
-                    float original_depth = (last_depth + depth) * 0.5f;
-                    
-                    // Distribution-based smoothing: blend with distribution mean for stability
-                    // Only apply smoothing when distribution is reliable (enough Gaussians)
-                    if (distribution_gaussian_count >= 2 && weight_sum > 1e-6f) {
-                        // Blend factor: use distribution mean more when variance is low (more reliable)
-                        float variance_normalized = fminf(distribution_variance / 0.01f, 1.0f);  // Normalize variance
-                        float blend_factor = 1.0f - variance_normalized * 0.3f;  // Blend up to 30% with distribution mean
-                        median_depth = blend_factor * original_depth + (1.0f - blend_factor) * distribution_mean;
-                    } else {
-                        // Fallback to original method if distribution is not reliable
-                        median_depth = original_depth;
-                    }
+                    median_depth = (last_depth + depth) * 0.5f;  // Original smoothing
                 } else {
-                    // First depth: use current depth or distribution mean if available
-                    if (distribution_gaussian_count >= 1 && weight_sum > 1e-6f) {
-                        median_depth = distribution_mean;
-                    } else {
-                        median_depth = depth;
-                    }
+                    median_depth = depth;  // First depth
                 }
                 median_contributor = contributor;
             }
@@ -517,73 +505,34 @@ renderCUDA(
 			// }
 			// ========== END OF ORIGINAL UNBIASED-DEPTH CODE ==========
 
-			// ========== NEW METHOD: Depth Distribution-Based Convergence Loss ==========
-			// Core idea: Model depth as probability distribution P(d|x) and constrain distribution consistency
-			// Instead of constraining depth values, we constrain depth distribution consistency
-			// This is fundamentally different from Unbiased-Depth's point estimation approach
-			if((T > 0.09f)) {
+			// ========== ULTRA-FAST METHOD: Minimal Depth Distribution-Based Convergence Loss ==========
+			// Maximum speed optimization: skip RGB computation when possible, use simplified loss
+			if((T > 0.09f) && distribution_gaussian_count > 1 && weight_sum > 1e-6f) {
+				// Early exit: only compute loss when distribution is meaningful
+				// Skip expensive RGB computation for most Gaussians
+				
 				float w = alpha * T;
 				
-				// Step 1: Compute reflection-aware weight
-				// Estimate specular strength from RGB
-				float rgb_r = features[collected_id[j] * CHANNELS + 0];
-				float rgb_g = features[collected_id[j] * CHANNELS + 1];
-				float rgb_b = features[collected_id[j] * CHANNELS + 2];
+				// Simplified loss: use only consistency term (skip expensive RGB-based reflection weight)
+				// This is much faster and still provides distribution constraint
+				const float lambda_consistency = 0.2f;
+				const float consistency_threshold = 0.01f;
 				
-				// Compute RGB luminance
-				float luminance = (rgb_r + rgb_g + rgb_b) / 3.0f;
+				// Fast consistency term: only compute if deviation exceeds threshold
+				float depth_diff = depth - distribution_mean;
+				float depth_diff_sq = depth_diff * depth_diff;
 				
-				// Compute RGB variance
-				float rgb_mean = luminance;
-				float rgb_variance = ((rgb_r - rgb_mean) * (rgb_r - rgb_mean) + 
-				                      (rgb_g - rgb_mean) * (rgb_g - rgb_mean) + 
-				                      (rgb_b - rgb_mean) * (rgb_b - rgb_mean)) / 3.0f;
-				
-				// Specular strength: high luminance + high variance (highlights)
-				float specular_strength_raw = luminance * rgb_variance;
-				
-				// Normalize to [0,1] using sigmoid
-				float specular_strength = 1.0f / (1.0f + expf(-10.0f * specular_strength_raw));
-				
-				// Reflection-aware weight: moderate constraint for specular regions
-				const float lambda_spec = 1.0f;  // Reduced from 2.0f to avoid over-constraint
-				float reflection_weight = 1.0f + lambda_spec * specular_strength;
-				
-				// Step 2: Compute improved depth distribution-based loss
-				// Loss = reflection_weight * w * [lambda_concentration * Var(P) + lambda_consistency * (d - E[d])^2]
-				// Reduced weights to preserve geometric quality while still constraining distribution
-				if (distribution_gaussian_count > 1 && weight_sum > 1e-6f) {
-					// Reduced weights: prioritize geometric quality over distribution constraint
-					const float lambda_concentration = 0.1f;  // Reduced from 0.5f
-					const float lambda_consistency = 0.2f;    // Reduced from 1.0f
-					
-					// Distribution concentration term: Var(P) - smaller variance means more concentrated
-					// Apply only when variance is significant (avoid over-constraint on already concentrated distributions)
-					float variance_threshold = 0.001f;  // Only constrain when variance is above threshold
-					float concentration_term = 0.0f;
-					if (distribution_variance > variance_threshold) {
-						concentration_term = distribution_variance - variance_threshold;  // Only penalize excess variance
-					}
-					
-					// Depth-mean consistency term: (d - E[d])^2 - constraint depth to be close to distribution mean
-					// Apply only when depth deviation is significant
-					float depth_diff = depth - distribution_mean;
-					float depth_diff_sq = depth_diff * depth_diff;
-					float consistency_threshold = 0.01f;  // Only constrain when deviation is significant
-					float consistency_term = 0.0f;
-					if (depth_diff_sq > consistency_threshold) {
-						consistency_term = depth_diff_sq - consistency_threshold;  // Only penalize excess deviation
-					}
-					
-					// Combined loss with reduced impact
-					Converge += reflection_weight * w * (lambda_concentration * concentration_term + lambda_consistency * consistency_term);
+				if (depth_diff_sq > consistency_threshold) {
+					float consistency_term = depth_diff_sq - consistency_threshold;
+					// Use fixed weight instead of reflection-aware weight (skip RGB computation)
+					Converge += w * lambda_consistency * consistency_term;
 				}
 				
 				// Keep track of last values for backward pass
 				last_G = G;
 				last_converge = contributor;
 			}
-			// ========== END OF NEW METHOD ==========
+			// ========== END OF ULTRA-FAST METHOD ==========
 			
 			// DISABLED: Improvement 2.1: Global depth convergence loss
 			// Accumulate weighted depth and weights (will compute mean after loop)

@@ -393,64 +393,35 @@ renderCUDA(
                 // dL/dd = reflection_weight * w * lambda_consistency * 2 * (d - E[d]) * (1 - d(E[d])/dd)
                 // For simplicity, we treat E[d] as constant (similar to batch normalization)
                 // This gives: dL/dd ≈ reflection_weight * w * lambda_consistency * 2 * (d - E[d])
+                // Ultra-fast backward: skip RGB computation, use simplified gradient
                 if (contributor < final_converge) {
-                    // Estimate specular strength from RGB (same as forward)
-                    float rgb_r = collected_colors[0 * BLOCK_SIZE + j];
-                    float rgb_g = collected_colors[1 * BLOCK_SIZE + j];
-                    float rgb_b = collected_colors[2 * BLOCK_SIZE + j];
-                    
-                    // Compute RGB luminance
-                    float luminance = (rgb_r + rgb_g + rgb_b) / 3.0f;
-                    
-                    // Compute RGB variance
-                    float rgb_mean = luminance;
-                    float rgb_variance = ((rgb_r - rgb_mean) * (rgb_r - rgb_mean) + 
-                                          (rgb_g - rgb_mean) * (rgb_g - rgb_mean) + 
-                                          (rgb_b - rgb_mean) * (rgb_b - rgb_mean)) / 3.0f;
-                    
-                    // Specular strength: high luminance + high variance
-                    float specular_strength_raw = luminance * rgb_variance;
-                    float specular_strength = 1.0f / (1.0f + expf(-10.0f * specular_strength_raw));
-                    
-                    // Reflection-aware weight (same as forward, reduced)
-                    const float lambda_spec = 1.0f;  // Reduced from 2.0f
-                    float reflection_weight = 1.0f + lambda_spec * specular_strength;
-                    
-                    // Compute depth distribution statistics for gradient computation
-                    // We approximate E[d] using weighted average of processed Gaussians
-                    // This is a simplified approximation since backward pass processes Gaussians in reverse order
-                    const float lambda_concentration = 0.1f;  // Reduced from 0.5f
-                    const float lambda_consistency = 0.2f;     // Reduced from 1.0f
-                    const float variance_threshold = 0.001f;   // Same as forward
-                    const float consistency_threshold = 0.01f;  // Same as forward
+                    const float lambda_consistency = 0.2f;
+                    const float consistency_threshold = 0.01f;
                     
                     float w = alpha * T;
                     
-                    // Update backward distribution statistics (approximate)
+                    // Fast backward distribution statistics update
                     backward_weight_sum += w;
                     if (backward_weight_sum > 1e-6f) {
                         backward_weighted_depth_sum += w * c_d;
                         backward_distribution_mean = backward_weighted_depth_sum / backward_weight_sum;
-                    }
-                    
-                    // Gradient for consistency term: 2 * (d - E[d])
-                    // Use approximated distribution mean, with threshold to avoid over-constraint
-                    if (backward_weight_sum > 1e-6f && backward_distribution_mean > 0.0f) {
-                        float depth_diff = c_d - backward_distribution_mean;
-                        float depth_diff_sq = depth_diff * depth_diff;
                         
-                        // Only apply gradient when deviation exceeds threshold (same as forward)
-                        if (depth_diff_sq > consistency_threshold) {
-                            // Consistency term gradient: 2 * (d - E[d])
-                            float consistency_grad = 2.0f * depth_diff;
-                            float grad = reflection_weight * w * lambda_consistency * consistency_grad * dL_dpixConverge;
+                        // Fast gradient computation: only when deviation exceeds threshold
+                        if (backward_distribution_mean > 0.0f) {
+                            float depth_diff = c_d - backward_distribution_mean;
+                            float depth_diff_sq = depth_diff * depth_diff;
                             
-                            // Apply forward scale for encouraging convergence toward camera
-                            if (c_d > backward_distribution_mean) {
-                                grad *= forward_scale;
+                            if (depth_diff_sq > consistency_threshold) {
+                                // Use fixed weight instead of reflection-aware weight (skip RGB computation)
+                                float consistency_grad = 2.0f * depth_diff;
+                                float grad = w * lambda_consistency * consistency_grad * dL_dpixConverge;
+                                
+                                if (c_d > backward_distribution_mean) {
+                                    grad *= forward_scale;
+                                }
+                                
+                                dL_dz += grad;
                             }
-                            
-                            dL_dz += grad;
                         }
                     }
                 }
