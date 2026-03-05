@@ -327,6 +327,7 @@ renderCUDA(
     float first_depth = 0;
 	float last_depth = 0;
     float last_G = 0;
+    float last_normal[3] = {0.0f, 0.0f, 0.0f};  // Store last Gaussian's normal for surface-aware constraint
     float cum_opacity = 0;
 	
 	// Depth Distribution Modeling: Track statistics for computing depth distribution
@@ -505,34 +506,86 @@ renderCUDA(
 			// }
 			// ========== END OF ORIGINAL UNBIASED-DEPTH CODE ==========
 
-			// ========== ULTRA-FAST METHOD: Minimal Depth Distribution-Based Convergence Loss ==========
-			// Maximum speed optimization: skip RGB computation when possible, use simplified loss
-			if((T > 0.09f) && distribution_gaussian_count > 1 && weight_sum > 1e-6f) {
-				// Early exit: only compute loss when distribution is meaningful
-				// Skip expensive RGB computation for most Gaussians
-				
-				float w = alpha * T;
-				
-				// Simplified loss: use only consistency term (skip expensive RGB-based reflection weight)
-				// This is much faster and still provides distribution constraint
-				const float lambda_consistency = 0.2f;
-				const float consistency_threshold = 0.01f;
-				
-				// Fast consistency term: only compute if deviation exceeds threshold
-				float depth_diff = depth - distribution_mean;
-				float depth_diff_sq = depth_diff * depth_diff;
-				
-				if (depth_diff_sq > consistency_threshold) {
-					float consistency_term = depth_diff_sq - consistency_threshold;
-					// Use fixed weight instead of reflection-aware weight (skip RGB computation)
-					Converge += w * lambda_consistency * consistency_term;
+			// ========== STRATEGY 4: Surface-Aware Local Constraint ==========
+			// Innovation: Combine normal information with depth difference for surface-aware constraint
+			// Key idea: Only constrain Gaussians on the same surface (similar normals)
+			// - Normal similarity > 0.9: Strong constraint (likely same surface)
+			// - Normal similarity 0.7-0.9: Normal constraint (likely same object)
+			// - Normal similarity 0.3-0.7: Weak constraint (likely different parts)
+			// - Normal similarity < 0.3: Very weak or no constraint (likely different objects)
+			// This is more physically accurate than Unbiased-Depth's fixed constraint
+			if((T > 0.09f)) {
+				if(last_converge > 0) {
+					float w = alpha * T;
+					const float lambda_consistency = 0.1f;
+					
+					// Step 1: Calculate normal similarity (dot product)
+					// Normal similarity reflects whether Gaussians are on the same surface
+					float normal_similarity = normal[0] * last_normal[0] + 
+											  normal[1] * last_normal[1] + 
+											  normal[2] * last_normal[2];
+					normal_similarity = fmaxf(-1.0f, fminf(1.0f, normal_similarity));  // Clamp to [-1, 1]
+					
+					// Step 2: Adaptive weight based on normal similarity (KEY INNOVATION)
+					// This is different from Unbiased-Depth which doesn't use normal information
+					float adaptive_weight = 1.0f;
+					if (normal_similarity > 0.9f) {
+						// Very similar normals: likely same surface, strong constraint
+						adaptive_weight = 2.0f;
+					} else if (normal_similarity > 0.7f) {
+						// Similar normals: likely same object, normal constraint
+						adaptive_weight = 1.0f;
+					} else if (normal_similarity > 0.3f) {
+						// Less similar normals: likely different parts, weak constraint
+						adaptive_weight = 0.5f;
+					} else {
+						// Very different normals: likely different objects, very weak constraint
+						adaptive_weight = 0.1f;
+					}
+					
+					// Step 3: Combine with depth difference
+					// If depth difference is large AND normals are different, likely different objects
+					float depth_diff = depth - last_depth;
+					float depth_diff_abs = fabsf(depth_diff);
+					
+					if (depth_diff_abs > 0.2f && normal_similarity < 0.5f) {
+						// Large depth difference AND different normals: likely different objects, no constraint
+						adaptive_weight = 0.0f;
+					} else if (depth_diff_abs < 0.05f && normal_similarity > 0.8f) {
+						// Small depth difference AND similar normals: definitely same surface, strengthen
+						adaptive_weight *= 1.2f;
+					}
+					
+					// Step 4: Combine with distribution information (optional refinement)
+					if (distribution_gaussian_count > 1 && weight_sum > 1e-6f) {
+						float depth_diff_from_mean = depth - distribution_mean;
+						float last_diff_from_mean = last_depth - distribution_mean;
+						float mean_distance = (fabsf(depth_diff_from_mean) + fabsf(last_diff_from_mean)) * 0.5f;
+						
+						if (mean_distance < 0.05f && depth_diff_abs < 0.1f && normal_similarity > 0.7f) {
+							// All indicators suggest same surface: strengthen constraint
+							adaptive_weight *= 1.2f;
+						} else if (mean_distance > 0.3f && depth_diff_abs > 0.15f && normal_similarity < 0.5f) {
+							// All indicators suggest different surfaces: weaken constraint
+							adaptive_weight *= 0.5f;
+						}
+					}
+					
+					// Surface-aware local constraint: (d_i - d_{i-1})^2 with adaptive weight based on normal similarity
+					// This is fundamentally different from Unbiased-Depth: uses normal information for surface awareness
+					if (adaptive_weight > 0.01f) {
+						Converge += w * lambda_consistency * adaptive_weight * depth_diff * depth_diff;
+					}
 				}
 				
 				// Keep track of last values for backward pass
 				last_G = G;
 				last_converge = contributor;
+				last_normal[0] = normal[0];
+				last_normal[1] = normal[1];
+				last_normal[2] = normal[2];
 			}
-			// ========== END OF ULTRA-FAST METHOD ==========
+			// ========== END OF STRATEGY 4 ==========
 			
 			// DISABLED: Improvement 2.1: Global depth convergence loss
 			// Accumulate weighted depth and weights (will compute mean after loop)

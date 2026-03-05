@@ -85,7 +85,7 @@ class OptimizationParams(ParamGroup):
         self.lambda_dssim = 0.2
         self.lambda_dist = 0.0
         self.lambda_normal = 0.05
-        self.lambda_converge_local = 5.0  # Local convergence loss (reduced from 7.0 to improve stability)
+        self.lambda_converge_local = 1.0  # Local convergence loss (reduced from 5.0 to improve PSNR, was causing PSNR degradation)
         self.lambda_view = 0.02  # View-dependent depth constraint loss (reduced from 0.05 to improve stability)
         self.lambda_view_weight = 2.0  # Weight parameter for view-dependent constraint
         self.lambda_reflection = 0.01  # Multi-view reflection consistency loss (reduced from 0.05 to improve stability)

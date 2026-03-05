@@ -14,10 +14,12 @@ import sys
 from argparse import ArgumentParser
 
 # Path to the MipNerf dataset
-mipnerf360 = "/dataset/MipNerf360"
+mipnerf360 = "../data/m360"
 
 mipnerf360_outdoor_scenes = ["bicycle", "flowers", "garden", "stump", "treehill"]
+mipnerf360_outdoor_scenes = ["bicycle"]
 mipnerf360_indoor_scenes = ["room", "counter", "kitchen", "bonsai"]
+mipnerf360_indoor_scenes = []
 
 python_path = sys.executable
 
@@ -25,14 +27,15 @@ skip_training = False
 skip_rendering = False
 skip_metrics = False
 
-lambda_converge = 7.0
+lambda_converge = 1.0
 seed = 1111
 
 all_scenes = []
 all_scenes.extend(mipnerf360_outdoor_scenes)
 all_scenes.extend(mipnerf360_indoor_scenes)
+all_scenes = ["bicycle"]
 
-output_path = f"./eval/mipnerf360/{seed}"
+output_path = f"../output/distrigs/mipnerf360/{seed}"
 
 if not skip_training:
     common_args = " ".join([
@@ -41,7 +44,7 @@ if not skip_training:
         "--eval", # Only required when NVS
         "--lambda_dist 0",
         f"--lambda_converge {lambda_converge}",
-        "--densify_until_iter 20000",
+        # "--densify_until_iter 20000",
         f"--seed {seed}"
     ])
     for scene in mipnerf360_outdoor_scenes:

@@ -27,11 +27,11 @@ if __name__ == '__main__':
 
     lambda_normal = 0.05        # 2D_GS Normal Consistency
     lambda_dist = 0             # 2D_GS Depth Distortion
-    lambda_converge = 7.0       # Converge Loss
+    lambda_converge = 5.0       # Converge Loss
     seed = 1
 
     for scene in dtu_scenes:
-        output_path = "../output/unbaised/eval/dtu/" + scene
+        output_path = "../output/distrigs/dtu/" + scene
 
         # ---------------------- Train ----------------------
         if not skip_training:

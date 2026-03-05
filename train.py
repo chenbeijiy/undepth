@@ -110,10 +110,10 @@ def training(dataset: ModelParams,
 
         # Local convergence loss (original adjacent constraint)
         # 添加权重调度：逐渐增加权重，避免突然启用导致不稳定
-        lambda_converge_local = opt.lambda_converge_local if iteration > 10000 else 0.00
+        lambda_converge_local = opt.lambda_converge_local if iteration > 15000 else 0.00  # Delayed to 15000 to avoid PSNR degradation
         if lambda_converge_local > 0:
-            # 权重调度：在10000-15000步之间逐渐增加权重
-            weight_schedule_converge = min(1.0, (iteration - 10000) / 5000.0)
+            # 权重调度：在15000-20000步之间逐渐增加权重（延迟启用以避免PSNR下降）
+            weight_schedule_converge = min(1.0, (iteration - 15000) / 5000.0)
             lambda_converge_scheduled = lambda_converge_local * weight_schedule_converge
             converge_local_loss = lambda_converge_scheduled * converge.mean()
         else:

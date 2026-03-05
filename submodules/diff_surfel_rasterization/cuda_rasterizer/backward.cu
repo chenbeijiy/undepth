@@ -387,48 +387,98 @@ renderCUDA(
                 // }
                 // ========== END OF ORIGINAL UNBIASED-DEPTH CODE ==========
 
-                // ========== NEW METHOD: Backward pass for depth distribution-based convergence loss ==========
-                // Loss = reflection_weight * w * [lambda_concentration * Var(P) + lambda_consistency * (d - E[d])^2]
-                // Gradient computation:
-                // dL/dd = reflection_weight * w * lambda_consistency * 2 * (d - E[d]) * (1 - d(E[d])/dd)
-                // For simplicity, we treat E[d] as constant (similar to batch normalization)
-                // This gives: dL/dd ≈ reflection_weight * w * lambda_consistency * 2 * (d - E[d])
-                // Ultra-fast backward: skip RGB computation, use simplified gradient
-                if (contributor < final_converge) {
-                    const float lambda_consistency = 0.2f;
-                    const float consistency_threshold = 0.01f;
+                // ========== STRATEGY 4: Backward pass for surface-aware local constraint ==========
+                // Innovation: Combine normal information with depth difference for surface-aware constraint
+                // Loss = w * lambda_consistency * adaptive_weight * (d_i - d_{i-1})^2
+                // where adaptive_weight is based on normal similarity (surface awareness)
+                // Gradient: dL/dd_i = w * lambda_consistency * adaptive_weight * 2 * (d_i - d_{i-1})
+                if (contributor < final_converge && last_convergeDepth > 0.0f) {
+                    const float lambda_consistency = 0.1f;
                     
                     float w = alpha * T;
                     
-                    // Fast backward distribution statistics update
+                    // Step 1: Calculate normal similarity (dot product)
+                    // Normal similarity reflects whether Gaussians are on the same surface
+                    float normal_similarity = normal[0] * last_normal[0] + 
+                                              normal[1] * last_normal[1] + 
+                                              normal[2] * last_normal[2];
+                    normal_similarity = fmaxf(-1.0f, fminf(1.0f, normal_similarity));  // Clamp to [-1, 1]
+                    
+                    // Step 2: Adaptive weight based on normal similarity (KEY INNOVATION)
+                    // This is different from Unbiased-Depth which doesn't use normal information
+                    float adaptive_weight = 1.0f;
+                    if (normal_similarity > 0.9f) {
+                        adaptive_weight = 2.0f;  // Very similar normals: strong constraint
+                    } else if (normal_similarity > 0.7f) {
+                        adaptive_weight = 1.0f;  // Similar normals: normal constraint
+                    } else if (normal_similarity > 0.3f) {
+                        adaptive_weight = 0.5f;  // Less similar normals: weak constraint
+                    } else {
+                        adaptive_weight = 0.1f;  // Very different normals: very weak constraint
+                    }
+                    
+                    // Step 3: Combine with depth difference
+                    float depth_diff = c_d - last_convergeDepth;
+                    float depth_diff_abs = fabsf(depth_diff);
+                    
+                    if (depth_diff_abs > 0.2f && normal_similarity < 0.5f) {
+                        // Large depth difference AND different normals: likely different objects, no constraint
+                        adaptive_weight = 0.0f;
+                    } else if (depth_diff_abs < 0.05f && normal_similarity > 0.8f) {
+                        // Small depth difference AND similar normals: definitely same surface, strengthen
+                        adaptive_weight *= 1.2f;
+                    }
+                    
+                    // Step 4: Combine with distribution information (optional refinement)
+                    if (backward_weight_sum > 1e-6f && backward_distribution_mean > 0.0f) {
+                        float depth_diff_from_mean = c_d - backward_distribution_mean;
+                        float last_diff_from_mean = last_convergeDepth - backward_distribution_mean;
+                        float mean_distance = (fabsf(depth_diff_from_mean) + fabsf(last_diff_from_mean)) * 0.5f;
+                        
+                        if (mean_distance < 0.05f && depth_diff_abs < 0.1f && normal_similarity > 0.7f) {
+                            // All indicators suggest same surface: strengthen constraint
+                            adaptive_weight *= 1.2f;
+                        } else if (mean_distance > 0.3f && depth_diff_abs > 0.15f && normal_similarity < 0.5f) {
+                            // All indicators suggest different surfaces: weaken constraint
+                            adaptive_weight *= 0.5f;
+                        }
+                    }
+                    
+                    // Surface-aware local constraint gradient: 2 * (d_i - d_{i-1}) with adaptive weight
+                    // This is fundamentally different from Unbiased-Depth: uses normal information
+                    if (adaptive_weight > 0.01f) {
+                        float consistency_grad = 2.0f * depth_diff;
+                        float grad = w * lambda_consistency * adaptive_weight * consistency_grad * dL_dpixConverge;
+                        
+                        if (c_d > last_convergeDepth) {
+                            grad *= forward_scale;
+                        }
+                        
+                        dL_dz += grad;
+                    }
+                    
+                    // Update backward distribution statistics for next iteration
                     backward_weight_sum += w;
                     if (backward_weight_sum > 1e-6f) {
                         backward_weighted_depth_sum += w * c_d;
                         backward_distribution_mean = backward_weighted_depth_sum / backward_weight_sum;
-                        
-                        // Fast gradient computation: only when deviation exceeds threshold
-                        if (backward_distribution_mean > 0.0f) {
-                            float depth_diff = c_d - backward_distribution_mean;
-                            float depth_diff_sq = depth_diff * depth_diff;
-                            
-                            if (depth_diff_sq > consistency_threshold) {
-                                // Use fixed weight instead of reflection-aware weight (skip RGB computation)
-                                float consistency_grad = 2.0f * depth_diff;
-                                float grad = w * lambda_consistency * consistency_grad * dL_dpixConverge;
-                                
-                                if (c_d > backward_distribution_mean) {
-                                    grad *= forward_scale;
-                                }
-                                
-                                dL_dz += grad;
-                            }
-                        }
+                    }
+                } else {
+                    // Update backward distribution statistics even if not computing gradient
+                    float w = alpha * T;
+                    backward_weight_sum += w;
+                    if (backward_weight_sum > 1e-6f) {
+                        backward_weighted_depth_sum += w * c_d;
+                        backward_distribution_mean = backward_weighted_depth_sum / backward_weight_sum;
                     }
                 }
-                // ========== END OF NEW METHOD ==========
+                // ========== END OF STRATEGY 4 ==========
 
 				last_convergeDepth = c_d;
                 last_G = G;
+                last_normal[0] = normal[0];
+                last_normal[1] = normal[1];
+                last_normal[2] = normal[2];
 			}   // end if (contributor < final_converge)
 
 			// Propagate gradients to per-Gaussian colors and keep
