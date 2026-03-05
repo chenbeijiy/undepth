@@ -445,36 +445,57 @@ renderCUDA(
             // cum_opacity += (alpha + 0.1 * G);
             // ========== END OF ORIGINAL UNBIASED-DEPTH CODE ==========
 
-            // ========== NEW METHOD: Depth Selection Based on Depth Distribution Expectation ==========
-            // Instead of using cum_opacity threshold, we use the expected value of depth distribution
-            // d_selected = E[d] = sum(pi_k * mu_k) / sum(pi_k)
-            // This is more stable and considers uncertainty
+            // ========== IMPROVED METHOD: Hybrid Depth Selection ==========
+            // Combine cum_opacity threshold with distribution information for better stability
+            // Core idea: Use cum_opacity for primary selection, but smooth with distribution mean when uncertain
             
-            // Update depth distribution statistics (w is already computed above)
+            // Update cum_opacity (original Unbiased-Depth method)
+            cum_opacity += (alpha + 0.1 * G);
+            
+            // Update depth distribution statistics for smoothing
             weight_sum += w;
-            if (weight_sum > 1e-6f) {  // Avoid division by zero
+            if (weight_sum > 1e-6f) {
                 weighted_depth_sum += w * depth;
-                // For variance calculation, we approximate sigma_k^2 using Gaussian scale
-                // sigma_k^2 ≈ scale_k^2 (simplified approximation)
-                // Use rho as proxy for variance (rho represents Gaussian spatial extent)
-                float sigma_k_sq = rho * 0.1f;  // Scale rho to approximate variance (can be tuned)
+                // Improved variance approximation: use a smaller scale factor for stability
+                float sigma_k_sq = rho * 0.05f;  // Reduced from 0.1f for more conservative variance
                 weighted_depth_sq_sum += w * (depth * depth + sigma_k_sq);
                 distribution_gaussian_count++;
                 
                 // Compute current distribution mean and variance
                 distribution_mean = weighted_depth_sum / weight_sum;
                 distribution_variance = (weighted_depth_sq_sum / weight_sum) - (distribution_mean * distribution_mean);
-                distribution_variance = fmaxf(distribution_variance, 0.0f);  // Ensure non-negative
-                
-                // Select depth based on distribution expectation
-                // Use distribution mean as selected depth (more stable than cum_opacity threshold)
-                median_depth = distribution_mean;
-                median_contributor = contributor;
+                distribution_variance = fmaxf(distribution_variance, 0.0f);
             }
             
-            // Also update cum_opacity for compatibility (but not used for depth selection in new method)
-            cum_opacity += (alpha + 0.1 * G);
-            // ========== END OF NEW METHOD ==========
+            // Hybrid depth selection: primarily use cum_opacity, but smooth with distribution
+            if (cum_opacity < 0.6f) {
+                // Primary selection: use cum_opacity threshold (original Unbiased-Depth)
+                if (last_depth > 0) {
+                    // Original smoothing: average with last depth
+                    float original_depth = (last_depth + depth) * 0.5f;
+                    
+                    // Distribution-based smoothing: blend with distribution mean for stability
+                    // Only apply smoothing when distribution is reliable (enough Gaussians)
+                    if (distribution_gaussian_count >= 2 && weight_sum > 1e-6f) {
+                        // Blend factor: use distribution mean more when variance is low (more reliable)
+                        float variance_normalized = fminf(distribution_variance / 0.01f, 1.0f);  // Normalize variance
+                        float blend_factor = 1.0f - variance_normalized * 0.3f;  // Blend up to 30% with distribution mean
+                        median_depth = blend_factor * original_depth + (1.0f - blend_factor) * distribution_mean;
+                    } else {
+                        // Fallback to original method if distribution is not reliable
+                        median_depth = original_depth;
+                    }
+                } else {
+                    // First depth: use current depth or distribution mean if available
+                    if (distribution_gaussian_count >= 1 && weight_sum > 1e-6f) {
+                        median_depth = distribution_mean;
+                    } else {
+                        median_depth = depth;
+                    }
+                }
+                median_contributor = contributor;
+            }
+            // ========== END OF IMPROVED METHOD ==========
             
 			// Render normal map
 			for (int ch=0; ch<3; ch++) N[ch] += normal[ch] * w;
@@ -524,26 +545,37 @@ renderCUDA(
 				// Normalize to [0,1] using sigmoid
 				float specular_strength = 1.0f / (1.0f + expf(-10.0f * specular_strength_raw));
 				
-				// Reflection-aware weight: stronger constraint for specular regions
-				const float lambda_spec = 2.0f;  // Configurable parameter
+				// Reflection-aware weight: moderate constraint for specular regions
+				const float lambda_spec = 1.0f;  // Reduced from 2.0f to avoid over-constraint
 				float reflection_weight = 1.0f + lambda_spec * specular_strength;
 				
-				// Step 2: Compute depth distribution-based loss
+				// Step 2: Compute improved depth distribution-based loss
 				// Loss = reflection_weight * w * [lambda_concentration * Var(P) + lambda_consistency * (d - E[d])^2]
-				// This constrains depth distribution consistency rather than depth value differences
-				if (distribution_gaussian_count > 1 && weight_sum > 1e-6f) {  // Need at least 2 Gaussians for variance
-					const float lambda_concentration = 0.5f;  // Weight for distribution concentration (variance)
-					const float lambda_consistency = 1.0f;    // Weight for depth-mean consistency
+				// Reduced weights to preserve geometric quality while still constraining distribution
+				if (distribution_gaussian_count > 1 && weight_sum > 1e-6f) {
+					// Reduced weights: prioritize geometric quality over distribution constraint
+					const float lambda_concentration = 0.1f;  // Reduced from 0.5f
+					const float lambda_consistency = 0.2f;    // Reduced from 1.0f
 					
-					// Distribution concentration term: Var(P) - smaller variance means more concentrated distribution
-					// This reduces surface discontinuity (holes)
-					float concentration_term = distribution_variance;
+					// Distribution concentration term: Var(P) - smaller variance means more concentrated
+					// Apply only when variance is significant (avoid over-constraint on already concentrated distributions)
+					float variance_threshold = 0.001f;  // Only constrain when variance is above threshold
+					float concentration_term = 0.0f;
+					if (distribution_variance > variance_threshold) {
+						concentration_term = distribution_variance - variance_threshold;  // Only penalize excess variance
+					}
 					
 					// Depth-mean consistency term: (d - E[d])^2 - constraint depth to be close to distribution mean
-					// This ensures depth consistency within the distribution
-					float consistency_term = (depth - distribution_mean) * (depth - distribution_mean);
+					// Apply only when depth deviation is significant
+					float depth_diff = depth - distribution_mean;
+					float depth_diff_sq = depth_diff * depth_diff;
+					float consistency_threshold = 0.01f;  // Only constrain when deviation is significant
+					float consistency_term = 0.0f;
+					if (depth_diff_sq > consistency_threshold) {
+						consistency_term = depth_diff_sq - consistency_threshold;  // Only penalize excess deviation
+					}
 					
-					// Combined loss with reflection-aware weight
+					// Combined loss with reduced impact
 					Converge += reflection_weight * w * (lambda_concentration * concentration_term + lambda_consistency * consistency_term);
 				}
 				

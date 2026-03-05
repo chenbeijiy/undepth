@@ -412,15 +412,17 @@ renderCUDA(
                     float specular_strength_raw = luminance * rgb_variance;
                     float specular_strength = 1.0f / (1.0f + expf(-10.0f * specular_strength_raw));
                     
-                    // Reflection-aware weight (same as forward)
-                    const float lambda_spec = 2.0f;
+                    // Reflection-aware weight (same as forward, reduced)
+                    const float lambda_spec = 1.0f;  // Reduced from 2.0f
                     float reflection_weight = 1.0f + lambda_spec * specular_strength;
                     
                     // Compute depth distribution statistics for gradient computation
                     // We approximate E[d] using weighted average of processed Gaussians
                     // This is a simplified approximation since backward pass processes Gaussians in reverse order
-                    const float lambda_concentration = 0.5f;
-                    const float lambda_consistency = 1.0f;
+                    const float lambda_concentration = 0.1f;  // Reduced from 0.5f
+                    const float lambda_consistency = 0.2f;     // Reduced from 1.0f
+                    const float variance_threshold = 0.001f;   // Same as forward
+                    const float consistency_threshold = 0.01f;  // Same as forward
                     
                     float w = alpha * T;
                     
@@ -432,18 +434,24 @@ renderCUDA(
                     }
                     
                     // Gradient for consistency term: 2 * (d - E[d])
-                    // Use approximated distribution mean
+                    // Use approximated distribution mean, with threshold to avoid over-constraint
                     if (backward_weight_sum > 1e-6f && backward_distribution_mean > 0.0f) {
-                        // Consistency term gradient: 2 * (d - E[d])
-                        float consistency_grad = 2.0f * (c_d - backward_distribution_mean);
-                        float grad = reflection_weight * w * lambda_consistency * consistency_grad * dL_dpixConverge;
+                        float depth_diff = c_d - backward_distribution_mean;
+                        float depth_diff_sq = depth_diff * depth_diff;
                         
-                        // Apply forward scale for encouraging convergence toward camera
-                        if (c_d > backward_distribution_mean) {
-                            grad *= forward_scale;
+                        // Only apply gradient when deviation exceeds threshold (same as forward)
+                        if (depth_diff_sq > consistency_threshold) {
+                            // Consistency term gradient: 2 * (d - E[d])
+                            float consistency_grad = 2.0f * depth_diff;
+                            float grad = reflection_weight * w * lambda_consistency * consistency_grad * dL_dpixConverge;
+                            
+                            // Apply forward scale for encouraging convergence toward camera
+                            if (c_d > backward_distribution_mean) {
+                                grad *= forward_scale;
+                            }
+                            
+                            dL_dz += grad;
                         }
-                        
-                        dL_dz += grad;
                     }
                 }
                 // ========== END OF NEW METHOD ==========
