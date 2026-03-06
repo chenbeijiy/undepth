@@ -26,8 +26,6 @@ python_path = sys.executable
 skip_training = False
 skip_rendering = False
 skip_metrics = False
-
-lambda_converge = 1.0
 seed = 1111
 
 all_scenes = []
@@ -43,7 +41,7 @@ if not skip_training:
         "--test_iterations -1",
         "--eval", # Only required when NVS
         "--lambda_dist 0",
-        f"--lambda_converge {lambda_converge}",
+        # f"--lambda_converge {lambda_converge}",
         # "--densify_until_iter 20000",
         f"--seed {seed}"
     ])

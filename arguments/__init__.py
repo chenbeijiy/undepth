@@ -85,16 +85,13 @@ class OptimizationParams(ParamGroup):
         self.lambda_dssim = 0.2
         self.lambda_dist = 0.0
         self.lambda_normal = 0.05
-        self.lambda_converge_local = 7.0  # Restored to original Unbiased-Depth value (was reduced to 1.0, but caused poor results)
-        self.lambda_view = 0.02  # View-dependent depth constraint loss (reduced from 0.05 to improve stability)
-        self.lambda_view_weight = 2.0  # Weight parameter for view-dependent constraint
-        self.lambda_reflection = 0.01  # Multi-view reflection consistency loss (reduced from 0.05 to improve stability)
-        self.reflection_consistency_interval = 200  # Compute reflection consistency every N iterations (increased interval)
-        self.num_reflection_views = 2  # Number of views to sample for reflection consistency
         self.opacity_cull = 0.05
-
-        # Keep for backward compatibility
-        self.lambda_converge = self.lambda_converge_local
+        self.lambda_converge = 7.0  # Restored to original Unbiased-Depth value (was reduced to 1.0, but caused poor results)
+        self.lambda_view = 0.02  # View-dependent depth constraint loss
+        self.lambda_view_weight = 2.0  # Weight parameter for view-dependent constraint
+        self.lambda_reflection = 0.01  # Multi-view reflection consistency loss 
+        self.reflection_consistency_interval = 200  # Compute reflection consistency every N iterations 
+        self.num_reflection_views = 2  # Number of views to sample for reflection consistency
         
         self.densification_interval = 100
         self.opacity_reset_interval = 3000

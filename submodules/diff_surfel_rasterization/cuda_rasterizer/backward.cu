@@ -367,20 +367,12 @@ renderCUDA(
 
                 constexpr float forward_scale = 1.25; // Encourage convergence toward camera
 
-                // ========== IMPROVEMENT 1: Backward pass for improved base weight ==========
-                // Innovation: Match forward pass with improved base weight
-                // Forward: Loss = improved_base_weight * (d_i - d_{i-1})^2
-                //          where improved_base_weight = sqrt(G * last_G) * (0.7 + 0.3 * ratio)
-                // Gradient: dL/dd = improved_base_weight * 2 * (d_i - d_{i-1})
+                // ========== ORIGINAL UNBIASED-DEPTH CODE: Backward pass for adjacent constraint ==========
+                // RESTORED: Completely revert to Unbiased-Depth's original implementation
+                // Loss = min(G, last_G) * (d_i - d_{i-1})^2
+                // Gradient: dL/dd = min(G, last_G) * 2 * (d_i - d_{i-1})
                 if (contributor < final_converge) {
-                    // Compute improved base weight for front Gaussian
-                    float front_geometric_mean = sqrtf(G * front_G);
-                    float front_min_G = min(G, front_G);
-                    float front_max_G = max(G, front_G);
-                    float front_ratio = (front_max_G > 1e-8f) ? (front_min_G / front_max_G) : 0.0f;
-                    float front_improved_weight = front_geometric_mean * (0.7f + 0.3f * front_ratio);
-                    
-                    float front_grad = front_improved_weight * 2.0f * (c_d - front_depth) * dL_dpixConverge;
+                    float front_grad = min(G, front_G) * 2.0f * (c_d - front_depth) * dL_dpixConverge;
                     if (c_d > front_depth) {
                         front_grad *= forward_scale;
                     }
@@ -388,14 +380,7 @@ renderCUDA(
                     dL_dz += front_grad;
                     
                     if (contributor < final_converge - 1) {
-                        // Compute improved base weight for back Gaussian
-                        float back_geometric_mean = sqrtf(G * last_G);
-                        float back_min_G = min(G, last_G);
-                        float back_max_G = max(G, last_G);
-                        float back_ratio = (back_max_G > 1e-8f) ? (back_min_G / back_max_G) : 0.0f;
-                        float back_improved_weight = back_geometric_mean * (0.7f + 0.3f * back_ratio);
-                        
-                        float back_grad = back_improved_weight * 2.0f * (c_d - last_convergeDepth) * dL_dpixConverge;
+                        float back_grad = min(G, last_G) * 2.0f * (c_d - last_convergeDepth) * dL_dpixConverge;
                         if (c_d > last_convergeDepth) {
                             back_grad *= forward_scale;
                         }
@@ -403,7 +388,7 @@ renderCUDA(
                         dL_dz += back_grad;
                     }
                 }
-                // ========== END OF IMPROVEMENT 1 ==========
+                // ========== END OF ORIGINAL UNBIASED-DEPTH CODE ==========
 
 				last_convergeDepth = c_d;
                 last_G = G;

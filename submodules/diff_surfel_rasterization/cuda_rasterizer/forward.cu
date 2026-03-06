@@ -457,39 +457,18 @@ renderCUDA(
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * w;
 
-			// ========== IMPROVEMENT 1: Improved Base Weight ==========
-			// Innovation: Replace min(G, last_G) with hybrid geometric mean weight
-			// Original Unbiased-Depth: min(G, last_G) * (depth - last_depth)^2
-			// Our improvement: sqrt(G * last_G) * (0.7 + 0.3 * ratio) * (depth - last_depth)^2
-			// where ratio = min(G, last_G) / max(G, last_G)
-			// This provides smoother weighting while maintaining sensitivity to smaller Gaussians
+			// ========== ORIGINAL UNBIASED-DEPTH CODE: Adjacent Gaussian Depth Difference Constraint ==========
+			// RESTORED: Completely revert to Unbiased-Depth's original implementation
+			// Original adjacent constraint: (d_i - d_{i-1})^2
 			if((T > 0.09f)) {
 				if(last_converge > 0) {
-					// Step 1: Compute improved base weight
-					// Geometric mean: sqrt(G * last_G) - smoother than min
-					float geometric_mean = sqrtf(G * last_G);
-					
-					// Ratio: min(G, last_G) / max(G, last_G) - ranges from 0 to 1
-					float min_G = min(G, last_G);
-					float max_G = max(G, last_G);
-					float ratio = (max_G > 1e-8f) ? (min_G / max_G) : 0.0f;
-					
-					// Hybrid weight: 70% geometric mean + 30% ratio-weighted
-					// This balances smoothness (geometric mean) with sensitivity (ratio)
-					float improved_base_weight = geometric_mean * (0.7f + 0.3f * ratio);
-					
-					// Step 2: Compute depth difference squared
-					float depth_diff = depth - last_depth;
-					float depth_diff_sq = depth_diff * depth_diff;
-					
-					// Step 3: Apply improved convergence loss
-					// Loss = improved_base_weight * (depth - last_depth)^2
-					Converge += improved_base_weight * depth_diff_sq;
+					// Original Unbiased-Depth method: min(G, last_G) * (depth - last_depth)^2
+					Converge += min(G, last_G) * (depth - last_depth) * (depth - last_depth);
 				}
 				last_G = G;
 				last_converge = contributor;
 			}
-			// ========== END OF IMPROVEMENT 1 ==========
+			// ========== END OF ORIGINAL UNBIASED-DEPTH CODE ==========
 			
 			// DISABLED: Improvement 2.1: Global depth convergence loss
 			// Accumulate weighted depth and weights (will compute mean after loop)

@@ -11,19 +11,7 @@
 
 import os
 import sys
-from random import randint
-import random
-import time
-from datetime import timedelta
 
-import json
-import torch
-import numpy as np
-from PIL import Image
-import cv2
-from tqdm import tqdm
-import uuid
-from argparse import ArgumentParser, Namespace
 
 from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
@@ -110,13 +98,12 @@ def training(dataset: ModelParams,
 
         # ========== ORIGINAL UNBIASED-DEPTH: Local convergence loss ==========
         # Restored to original Unbiased-Depth implementation for better results
-        lambda_converge_local = opt.lambda_converge_local if iteration > 10000 else 0.00  # Original Unbiased-Depth: enable at 10000
-        if lambda_converge_local > 0:
-            converge_local_loss = lambda_converge_local * converge.mean()
+        lambda_converge = opt.lambda_converge if iteration > 10000 else 0.00  # Original Unbiased-Depth: enable at 10000
+        if lambda_converge > 0:
+            converge_loss = lambda_converge * converge.mean()
         else:
-            converge_local_loss = torch.tensor(0.0, device="cuda")
+            converge_loss = torch.tensor(0.0, device="cuda")
         
-        converge_enhanced = converge_local_loss
         # ========== END OF ORIGINAL UNBIASED-DEPTH CODE ==========
 
         # ========== COMMENTED: View-dependent depth constraint loss (Innovation 3) ==========
@@ -198,7 +185,7 @@ def training(dataset: ModelParams,
         normal_loss = lambda_normal * (normal_error).mean()
         dist_loss = lambda_dist * (rend_dist).mean()
 
-        total_loss = loss + dist_loss + normal_loss + converge_enhanced
+        total_loss = loss + dist_loss + normal_loss + converge_loss
         
         total_loss.backward()
 
@@ -208,8 +195,7 @@ def training(dataset: ModelParams,
             # Progress bar
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
             ema_normal_for_log = 0.4 * normal_loss.item() + 0.6 * ema_normal_for_log
-            ema_converge_for_log = 0.4 * converge_enhanced.item() + 0.6 * ema_converge_for_log
-            # COMMENTED: View and reflection loss logging (disabled with improvements)
+            ema_converge_for_log = 0.4 * converge_loss.item() + 0.6 * ema_converge_for_log
             # ema_view_for_log = 0.4 * view_loss.item() + 0.6 * ema_view_for_log if lambda_view > 0 else 0.0
             # ema_reflection_for_log = 0.4 * reflection_loss.item() + 0.6 * ema_reflection_for_log if lambda_reflection > 0 else ema_reflection_for_log
             ema_view_for_log = 0.0
@@ -223,8 +209,6 @@ def training(dataset: ModelParams,
                     "converge": f"{ema_converge_for_log:.{5}f}",
                     # "view": f"{ema_view_for_log:.{5}f}" if lambda_view > 0 else "0.0",  # COMMENTED: Disabled with improvements
                     # "reflection": f"{ema_reflection_for_log:.{5}f}" if lambda_reflection > 0 else "0.0",  # COMMENTED: Disabled with improvements
-                    "view": "0.0",  # Disabled: reverted to Unbiased-Depth
-                    "reflection": "0.0",  # Disabled: reverted to Unbiased-Depth
                     "Points": f"{len(gaussians.get_xyz)}"  
                 }
                 progress_bar.set_postfix(loss_dict)
@@ -242,7 +226,6 @@ def training(dataset: ModelParams,
                 tb_writer.add_scalar('train_loss_patches/dist_loss', ema_dist_for_log, iteration)
                 tb_writer.add_scalar('train_loss_patches/normal_loss', ema_normal_for_log, iteration)
                 tb_writer.add_scalar('train_loss_patches/converge_loss', ema_converge_for_log, iteration)
-                # COMMENTED: View and reflection loss logging (disabled with improvements)
                 # tb_writer.add_scalar('train_loss_patches/reflection_loss', ema_reflection_for_log, iteration)
                 # tb_writer.add_scalar('train_loss_patches/view_loss', ema_view_for_log, iteration)
 
